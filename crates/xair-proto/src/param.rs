@@ -79,8 +79,14 @@ pub enum Param {
     Name(StripId),
     /// int 0..15
     Color(StripId),
-    /// int bitmask of DCA groups (inputs only)
+    /// int bitmask of DCA groups, bit 0 = DCA 1 (inputs, buses, FX sends)
     DcaGroups(StripId),
+    /// int bitmask of mute groups, bit 0 = group 1 (inputs, buses, FX sends)
+    MuteGroups(StripId),
+    /// int 1 = mute group n (1..4) engaged
+    MuteGroupOn(u8),
+    /// float 0..1, fader law — monitor / phones level
+    MonitorLevel,
     /// int 1 = assigned to main LR
     MainAssign(StripId),
     /// float 0..1, fader law
@@ -110,6 +116,9 @@ impl Param {
             Param::Name(s) => format!("{}/config/name", s.prefix()),
             Param::Color(s) => format!("{}/config/color", s.prefix()),
             Param::DcaGroups(s) => format!("{}/grp/dca", s.prefix()),
+            Param::MuteGroups(s) => format!("{}/grp/mute", s.prefix()),
+            Param::MuteGroupOn(n) => format!("/config/mute/{n}"),
+            Param::MonitorLevel => "/config/solo/level".into(),
             Param::MainAssign(s) => format!("{}/mix/lr", s.prefix()),
             Param::SendLevel(s, t) => format!("{}/mix/{:02}/level", s.prefix(), t.index()),
             Param::SendTap(s, t) => format!("{}/mix/{:02}/tap", s.prefix(), t.index()),
@@ -133,6 +142,7 @@ impl Param {
                 "/config/name" => Some(Param::Name(strip)),
                 "/config/color" => Some(Param::Color(strip)),
                 "/grp/dca" => Some(Param::DcaGroups(strip)),
+                "/grp/mute" => Some(Param::MuteGroups(strip)),
                 "/mix/lr" => Some(Param::MainAssign(strip)),
                 _ => {
                     let r = rest.strip_prefix("/mix/")?;
@@ -152,6 +162,8 @@ impl Param {
             ["", "headamp", n, "phantom"] => Some(Param::Phantom(n.parse().ok()?)),
             ["", "-stat", "solosw", n] => Some(Param::Solo(n.parse().ok()?)),
             ["", "-snap", "index"] => Some(Param::SnapIndex),
+            ["", "config", "mute", n] => Some(Param::MuteGroupOn(n.parse().ok()?)),
+            ["", "config", "solo", "level"] => Some(Param::MonitorLevel),
             ["", "-snap", n, "name"] => Some(Param::SnapName(n.parse().ok()?)),
             _ => None,
         }
@@ -169,8 +181,11 @@ impl Param {
             if s.has_pan() {
                 v.push(Param::Pan(s));
             }
-            if s.has_sends() {
+            if s.has_groups() {
                 v.push(Param::DcaGroups(s));
+                v.push(Param::MuteGroups(s));
+            }
+            if s.has_sends() {
                 v.push(Param::MainAssign(s));
                 for t in SendTo::all() {
                     v.push(Param::SendLevel(s, t));
@@ -186,6 +201,10 @@ impl Param {
                 v.push(Param::Phantom(h)); // aux in 17/18 has no phantom
             }
         }
+        for n in 1..=crate::strip::MUTE_GROUPS {
+            v.push(Param::MuteGroupOn(n));
+        }
+        v.push(Param::MonitorLevel);
         v.push(Param::SnapIndex);
         for i in 1..=64 {
             v.push(Param::SnapName(i));

@@ -402,6 +402,7 @@ impl eframe::App for App {
         });
         egui::Panel::right("main").exact_size(views::STRIP_W + 16.0).show(ui, |ui| {
             ui.add_space(6.0);
+            views::master_section(ui, &mut c);
             let h = ui.available_height() - 6.0;
             // In a monitor bank the right strip is that bus's master.
             let master = bank.bus.map(|t| t.strip()).unwrap_or(StripId::Main);

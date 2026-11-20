@@ -222,22 +222,10 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
             } else {
                 ui.label(egui::RichText::new("no preamp").color(theme::DIM));
             }
-            if s.has_sends() {
+            if s.has_groups() {
                 ui.add_space(6.0);
-                ui.label("DCA");
-                ui.horizontal(|ui| {
-                    let mask = c.st.dca_mask(s);
-                    for d in 1..=xair_proto::strip::DCAS {
-                        let bit = 1 << (d - 1);
-                        let on = mask & bit != 0;
-                        let name = c.st.name(StripId::Dca(d));
-                        let col = theme::strip_color(c.st.color(StripId::Dca(d)));
-                        let r = widgets::toggle(ui, Vec2::new(44.0, 22.0), &format!("D{d}"), on, col).on_hover_text(name);
-                        if r.clicked() {
-                            c.actions.push(Action::Set(Param::DcaGroups(s), Value::Int(mask ^ bit)));
-                        }
-                    }
-                });
+                group_row(ui, c, Param::DcaGroups(s), "DCA", "D");
+                group_row(ui, c, Param::MuteGroups(s), "Mute groups", "M");
             }
             if s.has_pan() {
                 ui.add_space(6.0);
@@ -283,12 +271,56 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
     });
 }
 
-/// DCA detail: toggle which inputs belong to DCA `n`.
+/// Label + 4 toggles editing a group bitmask param (`DcaGroups` / `MuteGroups`).
+fn group_row(ui: &mut Ui, c: &mut Ctx, p: Param, title: &str, short: &str) {
+    let mask = c.st.get(p).and_then(Value::as_i32).unwrap_or(0);
+    ui.horizontal(|ui| {
+        ui.add_sized(Vec2::new(78.0, 22.0), egui::Label::new(egui::RichText::new(title).size(11.0).color(theme::DIM)));
+        for g in 1..=4u8 {
+            let bit = 1 << (g - 1);
+            let on = mask & bit != 0;
+            let (col, hover) = match p {
+                Param::DcaGroups(_) => {
+                    let d = StripId::Dca(g);
+                    (theme::strip_color(c.st.color(d)), c.st.name(d))
+                }
+                _ => (theme::MUTE, format!("Mute group {g}")),
+            };
+            if widgets::toggle(ui, Vec2::new(30.0, 22.0), &format!("{short}{g}"), on, col).on_hover_text(hover).clicked() {
+                c.actions.push(Action::Set(p, Value::Int(mask ^ bit)));
+            }
+        }
+    });
+}
+
+/// Mute group masters + monitor level (right column above Main).
+pub fn master_section(ui: &mut Ui, c: &mut Ctx) {
+    ui.label(egui::RichText::new("MUTE GROUPS").size(10.0).color(theme::DIM));
+    for row in [[1u8, 2], [3, 4]] {
+        ui.horizontal(|ui| {
+            for g in row {
+                let on = c.st.mute_group_on(g);
+                if widgets::toggle(ui, Vec2::new(38.0, 26.0), &format!("M{g}"), on, theme::MUTE).clicked() {
+                    c.actions.push(Action::Set(Param::MuteGroupOn(g), Value::Int(!on as i32)));
+                }
+            }
+        });
+    }
+    ui.add_space(4.0);
+    let v = c.st.monitor_level();
+    ui.label(egui::RichText::new(format!("PHONES {}", widgets::fmt_db(fader::to_db(v)))).size(10.0).color(theme::DIM));
+    if let Some(nv) = widgets::hbar(ui, Vec2::new(80.0, 12.0), v, false, egui::Id::unique("monitor")) {
+        c.actions.push(Action::Set(Param::MonitorLevel, Value::Float(fader::quantize(nv))));
+    }
+    ui.add_space(6.0);
+}
+
+/// DCA detail: toggle which strips belong to DCA `n`.
 fn dca_members(ui: &mut Ui, c: &mut Ctx, n: u8) {
     let bit = 1 << (n - 1);
     ui.vertical(|ui| {
         section(ui, "MEMBERS  (click to assign / remove)");
-        let inputs: Vec<StripId> = StripId::all().into_iter().filter(|s| s.has_sends()).collect();
+        let inputs: Vec<StripId> = StripId::all().into_iter().filter(|s| s.has_groups()).collect();
         for row in inputs.chunks(11) {
             ui.horizontal(|ui| {
                 for &s in row {
@@ -296,8 +328,11 @@ fn dca_members(ui: &mut Ui, c: &mut Ctx, n: u8) {
                     let on = mask & bit != 0;
                     let col = theme::strip_color(c.st.color(s));
                     let mut name = c.st.name(s);
-                    if name.chars().count() > 8 {
-                        name = name.chars().take(8).collect();
+                    if matches!(s, StripId::Bus(_) | StripId::FxSend(_)) {
+                        name = format!("{} {name}", s.short());
+                    }
+                    if name.chars().count() > 9 {
+                        name = name.chars().take(9).collect();
                     }
                     let r = widgets::toggle(ui, Vec2::new(78.0, 30.0), &name, on, col).on_hover_text(s.to_string());
                     if r.clicked() {

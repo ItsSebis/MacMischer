@@ -65,6 +65,16 @@ impl MixerState {
     pub fn color(&self, s: StripId) -> i32 {
         self.i(Param::Color(s), 0)
     }
+    /// Mute group membership bitmask (bit 0 = group 1).
+    pub fn mute_mask(&self, s: StripId) -> i32 {
+        self.i(Param::MuteGroups(s), 0)
+    }
+    pub fn mute_group_on(&self, n: u8) -> bool {
+        self.i(Param::MuteGroupOn(n), 0) != 0
+    }
+    pub fn monitor_level(&self) -> f32 {
+        self.f(Param::MonitorLevel, 0.0)
+    }
     /// DCA membership bitmask (bit 0 = DCA 1).
     pub fn dca_mask(&self, s: StripId) -> i32 {
         self.i(Param::DcaGroups(s), 0)

@@ -6,6 +6,7 @@ pub const CHANNELS: u8 = 16;
 pub const BUSES: u8 = 6;
 pub const FX: u8 = 4;
 pub const DCAS: u8 = 4;
+pub const MUTE_GROUPS: u8 = 4;
 
 /// A strip with a fader. Numbers are 1-based like on the mixer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -81,6 +82,11 @@ impl StripId {
     /// Strips that can send to buses / FX (have `mix/NN/level`).
     pub fn has_sends(self) -> bool {
         matches!(self, StripId::Ch(_) | StripId::AuxIn | StripId::FxRtn(_))
+    }
+
+    /// Strips that can be assigned to DCAs and mute groups (`grp/dca`, `grp/mute`).
+    pub fn has_groups(self) -> bool {
+        !matches!(self, StripId::Dca(_) | StripId::Main)
     }
 
     pub fn has_pan(self) -> bool {
