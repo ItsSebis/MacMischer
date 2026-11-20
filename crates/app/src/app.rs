@@ -13,6 +13,7 @@ use crate::widgets::{Ballistics, UNITY};
 use eframe::egui;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use crate::connect::{parse_addr, Finder};
 use xair_core::{Mixer, Status};
@@ -20,7 +21,7 @@ use xair_proto::{Param, StripId, Value};
 
 enum Conn {
     Finding(Finder),
-    Mixer(Mixer),
+    Mixer(Arc<Mixer>),
 }
 
 pub struct App {
@@ -35,6 +36,8 @@ pub struct App {
     show_help: bool,
     editor: Option<BankEditor>,
     scenes: ScenesUi,
+    remote: xair_remote::Remote,
+    show_remote: bool,
     view: views::DetailView,
     show_routing: bool,
     /// Lock mode: only mutes, solo, navigation and the main fader respond.
@@ -59,6 +62,8 @@ impl App {
             show_help: false,
             editor: None,
             scenes: ScenesUi::default(),
+            remote: xair_remote::Remote::new(),
+            show_remote: false,
             view: views::DetailView::Mix,
             show_routing: false,
             locked: false,
@@ -71,6 +76,7 @@ impl App {
             Ok("dca") => app.selected = StripId::Dca(1),
             Ok("scenes") => app.scenes.open = true,
             Ok("routing") => app.show_routing = true,
+            Ok("remote") => app.show_remote = true,
             Ok("eq") => app.view = views::DetailView::Eq,
             Ok("dyn") => app.view = views::DetailView::Dynamics,
             _ => {}
@@ -91,6 +97,7 @@ impl App {
             Conn::Mixer(m) => Some(m.addr()),
             Conn::Finding(_) => None,
         };
+        self.remote.set_mixer(None);
         self.conn = Conn::Finding(Finder::new(current, false));
     }
 
@@ -104,7 +111,8 @@ impl App {
             self.session.prefs.last_mixer = Some(addr.to_string());
             self.session.prefs.save();
         }
-        let mixer = Mixer::connect(addr);
+        let mixer = Arc::new(Mixer::connect(addr));
+        self.remote.set_mixer(Some(mixer.clone()));
         let ctx = self.ctx.clone();
         mixer.set_repaint(move || ctx.request_repaint());
         self.conn = Conn::Mixer(mixer);
@@ -240,6 +248,7 @@ impl App {
                 Action::ToggleLock => self.locked = !self.locked,
                 Action::OpenScenes => self.scenes.open = !self.scenes.open,
                 Action::OpenRouting => self.show_routing = !self.show_routing,
+                Action::OpenRemote => self.show_remote = !self.show_remote,
                 Action::SetView(v) => self.view = v,
             }
         }
@@ -411,6 +420,15 @@ impl eframe::App for App {
                         prefs_changed = true;
                     }
                     ui.separator();
+                    let clients = self.remote.clients();
+                    let rtxt = match (self.session.remote.enabled, clients) {
+                        (false, _) => "Remote".to_string(),
+                        (true, 0) => "Remote on".to_string(),
+                        (true, n) => format!("Remote: {n}"),
+                    };
+                    if ui.button(rtxt).on_hover_text("Web remote for phones/tablets (Ctrl/Cmd+P)").clicked() {
+                        c.actions.push(Action::OpenRemote);
+                    }
                     if ui.button("Routing").on_hover_text("Ctrl/Cmd+R").clicked() {
                         c.actions.push(Action::OpenRouting);
                     }
@@ -470,6 +488,19 @@ impl eframe::App for App {
         let st_for_windows = st;
         self.scenes.window(&ctx, st_for_windows, self.session.prefs.safe_mode, &mut actions);
         crate::routing_view::routing_window(&ctx, &mut self.show_routing, st_for_windows, self.locked, &mut actions);
+        {
+            let (status, clients) = (self.remote.status(), self.remote.clients());
+            crate::remote_view::remote_window(
+                &ctx,
+                &mut self.show_remote,
+                &mut self.session.remote,
+                status,
+                clients,
+                &self.session.banks,
+                self.session.bank,
+                &names,
+            );
+        }
         drop(st_guard);
 
         if let Some(ed) = &mut self.editor {
@@ -485,6 +516,9 @@ impl eframe::App for App {
         if switch {
             self.switch_mixer();
         }
+        // Keep the web remote in sync with config and lock (cheap when unchanged).
+        self.remote.configure(&self.session.remote);
+        self.remote.set_locked(self.locked);
         if prefs_changed {
             self.session.prefs.save();
         }

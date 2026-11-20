@@ -13,7 +13,7 @@
 - [x] M4 Keyboard + banks (2026-11-20): number entry w/ early commit, keymap, nudges, bank editor (rename/reorder/add/remove/bind to bus), monitor banks, help (?). Keyboard NOT yet tested by user
 - [x] M5 Show files + connection UX (2026-11-20): Show menu (open/new/copy/import banks/rename/open folder), autosave 0.8 s after change + on exit, remembered mixer auto-connect, mixer picker, auto-retry while mixer off, Switch mixer menu
 - [x] M6 Scenes & routing + safety → v1 (2026-11-20): scenes window (recall/save/rename, confirm), routing window (inputs analog/USB, USB sends, aux outs, Ultranet, main read-only), Safe/Simple mode, Lock (Ctrl/Cmd+L), README + cargo-bundle metadata. NOT verified on hardware: snapshot save/recall, routing writes (permission to change mixer routing was denied during probing; inferred enum codes flagged in PROTOCOL.md)
-- [~] M7+ post-v1 — DONE: channel processing (2026-11-20: EQ view with draggable curve + low cut, gate/compressor view with transfer curves; keys v/e/c). OPEN: FX rack, web remote, RTA overlay, undo/A-B, presets, MIDI
+- [~] M7+ post-v1 — DONE: channel processing (2026-11-20: EQ view with draggable curve + low cut, gate/compressor view with transfer curves; keys v/e/c). DONE: web remote (2026-11-20). OPEN: FX rack, RTA overlay, undo/A-B, presets, MIDI
 
 ## Context
 Keyboard-first, fast, good-looking desktop app to control a Behringer XR18 (X Air) over the network.
@@ -90,3 +90,4 @@ crates/
 - 2026-11-20: M5 done. Files: shows in data dir (`~/.local/share/macmischer/shows/*.toml`, macOS `~/Library/Application Support/MacMischer/shows`), prefs in config dir (`~/.config/macmischer/prefs.toml`). Keymap is not yet stored in show files (deferred until keymap editing exists). Next: M6 scenes, routing, safety.
 - 2026-11-20: M6 done → v1 feature-complete. Open items before calling v1 released: user test of keyboard, scene recall/save, routing edits on hardware; solo index mapping; build .app on the MacBook. Next: M7 (processing, FX, RTA, undo, MIDI) on user's priority.
 - 2026-11-20: Icon (assets/icon/icon.svg → `cargo run -p icon-gen`). Bank-position numbering default. Channel processing done; hardware-verified scales in PROTOCOL.md. Processing edits not yet exercised on hardware (read-only checks only). Next: user picks between FX rack / web remote / RTA / undo / MIDI.
+- 2026-11-20: Web remote done: crate xair-remote (axum+WS, own tokio runtime), web/index.html client, settings window (Ctrl/Cmd+P) with QR + page editor; config in show file [remote]. Tested: 3 e2e tests (mock), Chrome against `cargo run -p xair-remote --example serve_mock` (port 8019). Not yet tested on a real phone / real mixer. Dev aid: isolate config with XDG_DATA_HOME/XDG_CONFIG_HOME when testing.

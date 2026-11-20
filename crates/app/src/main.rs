@@ -14,6 +14,7 @@ mod input;
 mod keymap;
 mod prefs;
 mod scenes;
+mod remote_view;
 mod routing_view;
 mod session;
 mod show;

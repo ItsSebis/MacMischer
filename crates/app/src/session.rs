@@ -16,7 +16,8 @@ pub struct Session {
     pub name: String,
     pub path: PathBuf,
     pub prefs: Prefs,
-    saved: (Vec<Bank>, usize, String),
+    pub remote: xair_remote::RemoteConfig,
+    saved: (Vec<Bank>, usize, String, xair_remote::RemoteConfig),
     changed_at: Option<Instant>,
     new_name: String,
     rename: String,
@@ -58,7 +59,8 @@ impl Session {
 
     fn from_show(show: Show, path: PathBuf, prefs: Prefs) -> Session {
         Session {
-            saved: (show.banks.clone(), show.current_bank, show.name.clone()),
+            saved: (show.banks.clone(), show.current_bank, show.name.clone(), show.remote.clone()),
+            remote: show.remote,
             banks: show.banks,
             bank: show.current_bank,
             rename: show.name.clone(),
@@ -72,12 +74,12 @@ impl Session {
     }
 
     fn to_show(&self) -> Show {
-        Show { name: self.name.clone(), banks: self.banks.clone(), current_bank: self.bank }
+        Show { name: self.name.clone(), banks: self.banks.clone(), current_bank: self.bank, remote: self.remote.clone() }
     }
 
     /// Write the show now if anything changed.
     pub fn save_now(&mut self) {
-        let snapshot = (self.banks.clone(), self.bank, self.name.clone());
+        let snapshot = (self.banks.clone(), self.bank, self.name.clone(), self.remote.clone());
         if snapshot == self.saved {
             return;
         }
@@ -95,7 +97,10 @@ impl Session {
 
     /// Call once per frame: saves shortly after the last change.
     pub fn autosave(&mut self, ctx: &egui::Context) {
-        let dirty = self.banks != self.saved.0 || self.bank != self.saved.1 || self.name != self.saved.2;
+        let dirty = self.banks != self.saved.0
+            || self.bank != self.saved.1
+            || self.name != self.saved.2
+            || self.remote != self.saved.3;
         if !dirty {
             self.changed_at = None;
             return;

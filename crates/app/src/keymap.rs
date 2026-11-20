@@ -61,6 +61,7 @@ impl Default for Keymap {
             (Binding::Key(Key::L, CMD), ToggleLock),
             (Binding::Key(Key::K, CMD), OpenScenes),
             (Binding::Key(Key::R, CMD), OpenRouting),
+            (Binding::Key(Key::P, CMD), OpenRemote),
             (Binding::Char('['), BankStep(-1)),
             (Binding::Char(']'), BankStep(1)),
         ];
@@ -102,6 +103,7 @@ impl Keymap {
             ("[ ]  F1-F12", "previous / next bank, jump to bank"),
             ("Ctrl/Cmd+K", "scenes"),
             ("Ctrl/Cmd+R", "routing"),
+            ("Ctrl/Cmd+P", "web remote (phones / tablets)"),
             ("Ctrl/Cmd+L", "lock / unlock (only mutes + main fader work)"),
             ("Esc", "cancel number entry"),
             ("?", "show / hide this help"),

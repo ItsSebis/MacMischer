@@ -28,6 +28,7 @@ pub enum Action {
     ToggleLock,
     OpenScenes,
     OpenRouting,
+    OpenRemote,
     SetView(crate::views::DetailView),
 }
 
@@ -63,6 +64,7 @@ impl Action {
             | Action::ToggleLock
             | Action::OpenScenes
             | Action::OpenRouting
+            | Action::OpenRemote
             | Action::SetView(_) => true,
             Action::Set(p, _) => matches!(
                 p,

@@ -43,6 +43,9 @@ pub struct Show {
     pub current_bank: usize,
     #[serde(default)]
     pub banks: Vec<Bank>,
+    /// Web remote settings and pages.
+    #[serde(default)]
+    pub remote: xair_remote::RemoteConfig,
 }
 
 /// On-disk representation (adds `format_version`, keeps it first in the file).
@@ -56,11 +59,11 @@ struct ShowFile {
 
 impl Show {
     pub fn default_show() -> Show {
-        Show { name: "Default".into(), banks: banks::defaults(), current_bank: 0 }
+        Show { name: "Default".into(), banks: banks::defaults(), current_bank: 0, remote: Default::default() }
     }
 
     pub fn from_template(name: &str, template: &Show) -> Show {
-        Show { name: name.into(), banks: template.banks.clone(), current_bank: 0 }
+        Show { name: name.into(), banks: template.banks.clone(), current_bank: 0, remote: template.remote.clone() }
     }
 
     pub fn load(path: &Path) -> Result<Show, ShowError> {

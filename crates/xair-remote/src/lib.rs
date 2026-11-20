@@ -164,20 +164,19 @@ impl Drop for Remote {
     }
 }
 
-/// LAN addresses to show as URLs (IPv4, non-loopback, container bridges last).
+/// Addresses phones can use (IPv4, non-loopback). Container/VM bridges are hidden;
+/// VPN interfaces (Tailscale etc.) come after the LAN ones.
 pub fn lan_addresses() -> Vec<IpAddr> {
+    const HIDDEN: [&str; 5] = ["docker", "br-", "veth", "virbr", "vmnet"];
+    const VPN: [&str; 3] = ["tailscale", "utun", "wg"];
     let mut v: Vec<(bool, IpAddr)> = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
         .filter(|i| !i.is_loopback() && i.ip().is_ipv4())
-        .map(|i| {
-            let virt = ["docker", "br-", "veth", "virbr", "tailscale", "utun", "vmnet"]
-                .iter()
-                .any(|p| i.name.starts_with(p));
-            (virt, i.ip())
-        })
+        .filter(|i| !HIDDEN.iter().any(|p| i.name.starts_with(p)))
+        .map(|i| (VPN.iter().any(|p| i.name.starts_with(p)), i.ip()))
         .collect();
-    v.sort_by_key(|(virt, ip)| (*virt, *ip));
+    v.sort_by_key(|(vpn, ip)| (*vpn, *ip));
     v.into_iter().map(|(_, ip)| ip).collect()
 }
 

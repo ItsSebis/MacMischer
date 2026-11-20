@@ -14,7 +14,7 @@ use xair_core::{Mixer, Status};
 use xair_proto::{fader, Param, StripId, Value};
 
 const TICK: Duration = Duration::from_millis(50);
-const METER_EVERY: u32 = 2; // ticks → ~10 Hz… plus 15 Hz feel with ballistics on the client
+const METER_EVERY: u32 = 2; // every 2nd 50 ms tick → 10 Hz meters
 const MAX_PIN_TRIES: u32 = 10;
 
 #[derive(Deserialize)]
@@ -233,7 +233,7 @@ impl Session {
             }
         }
         self.push_state(out);
-        if n % METER_EVERY == 0 {
+        if n.is_multiple_of(METER_EVERY) {
             if let (Some((_, page)), Some(m)) = (&self.page, self.mixer()) {
                 if page.meters {
                     let mt = m.meters();

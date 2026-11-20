@@ -40,6 +40,10 @@ The icon source is `assets/icon/icon.svg`; regenerate PNGs with `cargo run -p ic
 - **Shows**: banks are saved per show (TOML, autosaved). Show menu: new / copy / import banks / rename / open folder.
 - **Safety**: *Safe* mode asks before scene recall; *Lock* lets only mutes, solo and the main fader through.
 - Stereo-linked pairs appear as one wide strip.
+- **Web remote** (Ctrl/Cmd+P): phones/tablets on the LAN control selected strips — e.g. a musician's
+  own monitor mix (page bound to a bus) or a capped TV-room volume. Scan the QR code; optional PIN;
+  "Add to Home Screen" for a full-screen app. Try it without hardware:
+  `cargo run -p xair-remote --example serve_mock` → http://localhost:8019/. Protocol: docs/REMOTE.md.
 
 ## Layout
 
