@@ -170,7 +170,7 @@ fn meters(ip: &str, n: &str, secs: u64) -> R {
                 // Blob layout (expected): i32 LE count, then count * i16 LE (1/256 dB)
                 let cnt = i32::from_le_bytes(b[0..4].try_into().unwrap());
                 let vals: Vec<String> = b[4..]
-                    .chunks_exact(2)
+                    .as_chunks::<2>().0.iter()
                     .map(|c| format!("{:.0}", i16::from_le_bytes([c[0], c[1]]) as f32 / 256.0))
                     .collect();
                 println!("{path} #{count} blob={}B count={cnt} n={} dB: {}", b.len(), vals.len(), vals.join(" "));
