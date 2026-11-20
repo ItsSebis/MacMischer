@@ -57,6 +57,7 @@ impl App {
         match std::env::var("MM_SHOW").as_deref() {
             Ok("editor") => app.editor = Some(BankEditor::open(0, &app.banks[0])),
             Ok("help") => app.show_help = true,
+            Ok("dca") => app.selected = StripId::Dca(1),
             _ => {}
         }
         if mock {

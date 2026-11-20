@@ -65,6 +65,10 @@ impl MixerState {
     pub fn color(&self, s: StripId) -> i32 {
         self.i(Param::Color(s), 0)
     }
+    /// DCA membership bitmask (bit 0 = DCA 1).
+    pub fn dca_mask(&self, s: StripId) -> i32 {
+        self.i(Param::DcaGroups(s), 0)
+    }
     pub fn send_level(&self, s: StripId, t: SendTo) -> f32 {
         self.f(Param::SendLevel(s, t), 0.0)
     }

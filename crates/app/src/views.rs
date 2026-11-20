@@ -198,6 +198,11 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
         });
         ui.separator();
 
+        if let StripId::Dca(n) = s {
+            dca_members(ui, c, n);
+            return;
+        }
+
         // Input section
         ui.vertical(|ui| {
             ui.set_width(220.0);
@@ -216,6 +221,23 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
                 }
             } else {
                 ui.label(egui::RichText::new("no preamp").color(theme::DIM));
+            }
+            if s.has_sends() {
+                ui.add_space(6.0);
+                ui.label("DCA");
+                ui.horizontal(|ui| {
+                    let mask = c.st.dca_mask(s);
+                    for d in 1..=xair_proto::strip::DCAS {
+                        let bit = 1 << (d - 1);
+                        let on = mask & bit != 0;
+                        let name = c.st.name(StripId::Dca(d));
+                        let col = theme::strip_color(c.st.color(StripId::Dca(d)));
+                        let r = widgets::toggle(ui, Vec2::new(44.0, 22.0), &format!("D{d}"), on, col).on_hover_text(name);
+                        if r.clicked() {
+                            c.actions.push(Action::Set(Param::DcaGroups(s), Value::Int(mask ^ bit)));
+                        }
+                    }
+                });
             }
             if s.has_pan() {
                 ui.add_space(6.0);
@@ -258,6 +280,32 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
                 }
             });
         });
+    });
+}
+
+/// DCA detail: toggle which inputs belong to DCA `n`.
+fn dca_members(ui: &mut Ui, c: &mut Ctx, n: u8) {
+    let bit = 1 << (n - 1);
+    ui.vertical(|ui| {
+        section(ui, "MEMBERS  (click to assign / remove)");
+        let inputs: Vec<StripId> = StripId::all().into_iter().filter(|s| s.has_sends()).collect();
+        for row in inputs.chunks(11) {
+            ui.horizontal(|ui| {
+                for &s in row {
+                    let mask = c.st.dca_mask(s);
+                    let on = mask & bit != 0;
+                    let col = theme::strip_color(c.st.color(s));
+                    let mut name = c.st.name(s);
+                    if name.chars().count() > 8 {
+                        name = name.chars().take(8).collect();
+                    }
+                    let r = widgets::toggle(ui, Vec2::new(78.0, 30.0), &name, on, col).on_hover_text(s.to_string());
+                    if r.clicked() {
+                        c.actions.push(Action::Set(Param::DcaGroups(s), Value::Int(mask ^ bit)));
+                    }
+                }
+            });
+        }
     });
 }
 
