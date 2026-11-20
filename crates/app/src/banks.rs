@@ -8,11 +8,13 @@ pub struct Bank {
     pub strips: Vec<StripId>,
     /// When set, faders of input strips control their send to this bus/FX (sends-on-fader).
     pub bus: Option<SendTo>,
+    /// Number keys pick the n-th strip of this bank instead of mixer channel n.
+    pub positional: bool,
 }
 
 impl Bank {
     pub fn new(name: &str, strips: impl IntoIterator<Item = StripId>) -> Bank {
-        Bank { name: name.into(), strips: strips.into_iter().collect(), bus: None }
+        Bank { name: name.into(), strips: strips.into_iter().collect(), bus: None, positional: false }
     }
 }
 

@@ -198,3 +198,39 @@ mod tests {
         assert!((fader::to_db(UNITY)).abs() < 0.05);
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum Icon {
+    Up,
+    Down,
+    Remove,
+}
+
+/// Small square button with a painted icon (no font glyph dependency).
+pub fn icon_button(ui: &mut Ui, icon: Icon, enabled: bool) -> Response {
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(20.0), sense);
+    let p = ui.painter();
+    let bg = if enabled && resp.hovered() { theme::CAP_HOVER } else { theme::BUTTON };
+    p.rect_filled(rect, 3.0, bg);
+    let fg = if enabled { theme::TEXT } else { theme::BORDER };
+    let c = rect.center();
+    let r = 5.0;
+    match icon {
+        Icon::Up | Icon::Down => {
+            let s = if matches!(icon, Icon::Up) { -1.0 } else { 1.0 };
+            let pts = vec![
+                Pos2::new(c.x - r, c.y - s * r * 0.5),
+                Pos2::new(c.x + r, c.y - s * r * 0.5),
+                Pos2::new(c.x, c.y + s * r * 0.6),
+            ];
+            p.add(egui::Shape::convex_polygon(pts, fg, Stroke::NONE));
+        }
+        Icon::Remove => {
+            let st = Stroke::new(1.8, if enabled { theme::MUTE } else { fg });
+            p.line_segment([c + Vec2::new(-r, -r), c + Vec2::new(r, r)], st);
+            p.line_segment([c + Vec2::new(-r, r), c + Vec2::new(r, -r)], st);
+        }
+    }
+    resp
+}

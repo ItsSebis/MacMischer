@@ -53,6 +53,12 @@ impl App {
             show_help: false,
             editor: None,
         };
+        // Dev aid for screenshots: MM_SHOW=editor|help opens that dialog on start.
+        match std::env::var("MM_SHOW").as_deref() {
+            Ok("editor") => app.editor = Some(BankEditor::open(0, &app.banks[0])),
+            Ok("help") => app.show_help = true,
+            _ => {}
+        }
         if mock {
             let m = xair_mock::MockMixer::start();
             app.connect(m.addr());
@@ -100,6 +106,9 @@ impl App {
             return;
         }
         let now = Instant::now();
+        let b = self.current_bank();
+        let positional = b.positional.then(|| b.strips.len().min(99) as u8);
+        self.entry.set_positional(positional);
         let events = ctx.input(|i| i.events.clone());
         for ev in events {
             match ev {
@@ -143,6 +152,11 @@ impl App {
             match a {
                 Action::Set(p, v) => m.set(p, v),
                 Action::Select(s) => self.selected = s,
+                Action::SelectPosition(n) => {
+                    if let Some(s) = self.banks[self.bank].strips.get(n as usize - 1) {
+                        self.selected = *s;
+                    }
+                }
                 Action::SelectBank(i) => {
                     if i < self.banks.len() {
                         self.bank = i;
@@ -159,7 +173,8 @@ impl App {
                     }
                     let n = strips.len() as i32;
                     let i = match strips.iter().position(|x| *x == s) {
-                        Some(i) => (i as i32 + d).rem_euclid(n),
+                        Some(i) => (i as i32 + d).clamp(0, n - 1),
+                        None if d < 0 => n - 1,
                         None => 0,
                     };
                     self.selected = strips[i as usize];
@@ -241,7 +256,8 @@ impl App {
             let mut edit = None;
             let mut delete = None;
             for (i, b) in self.banks.iter().enumerate() {
-                let mut label = egui::RichText::new(format!("F{}  {}", i + 1, b.name));
+                let hash = if b.positional { "  #" } else { "" };
+                let mut label = egui::RichText::new(format!("F{}  {}{hash}", i + 1, b.name));
                 if b.bus.is_some() {
                     label = label.color(theme::SOLO);
                 }
@@ -290,6 +306,7 @@ impl App {
 fn entry_action(e: Entry) -> Action {
     match e {
         Entry::Select(s) => Action::Select(s),
+        Entry::Position(n) => Action::SelectPosition(n),
         Entry::Unity => Action::Unity,
     }
 }
@@ -387,7 +404,7 @@ impl eframe::App for App {
             let h = ui.available_height() - 6.0;
             // In a monitor bank the right strip is that bus's master.
             let master = bank.bus.map(|t| t.strip()).unwrap_or(StripId::Main);
-            views::strip(ui, &mut c, master, h, None);
+            views::strip(ui, &mut c, master, h, None, None);
         });
         egui::CentralPanel::default().show(ui, |ui| {
             let h = ui.available_height();
@@ -400,8 +417,9 @@ impl eframe::App for App {
             egui::ScrollArea::horizontal().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    for &s in &bank.strips {
-                        views::strip(ui, &mut c, s, h - 4.0, bank.bus);
+                    for (i, &s) in bank.strips.iter().enumerate() {
+                        let pos = bank.positional.then_some(i + 1);
+                        views::strip(ui, &mut c, s, h - 4.0, bank.bus, pos);
                     }
                 });
             });

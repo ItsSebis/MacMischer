@@ -1,7 +1,8 @@
-//! Modal editor for one fader bank: name, strips (add / reorder / remove), bus binding.
+//! Modal editor for one fader bank: name, strips (add / reorder / remove), bus binding, numbering.
 
 use crate::banks::Bank;
 use crate::theme;
+use crate::widgets::{icon_button, Icon};
 use eframe::egui;
 use std::collections::HashMap;
 use xair_proto::{SendTo, StripId};
@@ -24,16 +25,20 @@ impl BankEditor {
     ) -> Option<Option<(usize, Bank)>> {
         let mut result = None;
         let label = |s: StripId| format!("{:<4} {}", s.short(), names.get(&s).cloned().unwrap_or_default());
+        let screen = ctx.content_rect();
+        // Header + footer take ~240 px; lists get the rest (scrolling if needed).
+        let list_h = (screen.height() - 300.0).clamp(120.0, 480.0);
         egui::Window::new("Edit bank")
             .collapsible(false)
             .resizable(false)
+            .max_height(screen.height() - 40.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                egui::Grid::new("bank-hdr").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     ui.label("Name");
                     ui.text_edit_singleline(&mut self.draft.name);
-                });
-                ui.horizontal(|ui| {
+                    ui.end_row();
+
                     ui.label("Faders control");
                     let cur = match self.draft.bus {
                         None => "Channel levels".to_string(),
@@ -46,6 +51,14 @@ impl BankEditor {
                             ui.selectable_value(&mut self.draft.bus, Some(t), n);
                         }
                     });
+                    ui.end_row();
+
+                    ui.label("Number keys");
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut self.draft.positional, false, "Mixer channel (12 = Ch 12)");
+                        ui.radio_value(&mut self.draft.positional, true, "Bank position (3 = 3rd fader)");
+                    });
+                    ui.end_row();
                 });
                 if self.draft.bus.is_some() {
                     ui.label(
@@ -57,20 +70,21 @@ impl BankEditor {
                 ui.separator();
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
-                        ui.set_width(260.0);
+                        ui.set_width(270.0);
                         ui.label(egui::RichText::new("In this bank").strong());
-                        egui::ScrollArea::vertical().id_salt("in").max_height(360.0).show(ui, |ui| {
+                        egui::ScrollArea::vertical().id_salt("in").max_height(list_h).show(ui, |ui| {
                             let mut op = None;
                             let n = self.draft.strips.len();
                             for (i, s) in self.draft.strips.iter().enumerate() {
                                 ui.horizontal(|ui| {
-                                    if ui.add_enabled(i > 0, egui::Button::new("↑").small()).clicked() {
+                                    ui.label(egui::RichText::new(format!("{:>2}", i + 1)).monospace().color(theme::DIM));
+                                    if icon_button(ui, Icon::Up, i > 0).on_hover_text("Move left").clicked() {
                                         op = Some((i, -1));
                                     }
-                                    if ui.add_enabled(i + 1 < n, egui::Button::new("↓").small()).clicked() {
+                                    if icon_button(ui, Icon::Down, i + 1 < n).on_hover_text("Move right").clicked() {
                                         op = Some((i, 1));
                                     }
-                                    if ui.small_button("×").clicked() {
+                                    if icon_button(ui, Icon::Remove, true).on_hover_text("Remove").clicked() {
                                         op = Some((i, 0));
                                     }
                                     ui.label(egui::RichText::new(label(*s)).monospace());
@@ -87,9 +101,9 @@ impl BankEditor {
                     });
                     ui.separator();
                     ui.vertical(|ui| {
-                        ui.set_width(260.0);
+                        ui.set_width(270.0);
                         ui.label(egui::RichText::new("Add (click)").strong());
-                        egui::ScrollArea::vertical().id_salt("avail").max_height(360.0).show(ui, |ui| {
+                        egui::ScrollArea::vertical().id_salt("avail").max_height(list_h).show(ui, |ui| {
                             for s in StripId::all() {
                                 if self.draft.strips.contains(&s) {
                                     continue;
@@ -103,7 +117,7 @@ impl BankEditor {
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command) {
+                    if ui.button("Save").clicked() {
                         result = Some(Some((self.index, self.draft.clone())));
                     }
                     if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {

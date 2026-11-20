@@ -6,6 +6,8 @@ use xair_proto::{Param, StripId, Value};
 pub enum Action {
     Set(Param, Value),
     Select(StripId),
+    /// Select the n-th (1-based) strip of the current bank.
+    SelectPosition(u8),
     SelectBank(usize),
     /// Move the selected fader (or bus send in a monitor bank) by dB.
     Nudge(f32),

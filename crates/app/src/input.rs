@@ -4,6 +4,9 @@
 //! `r` → Aux in · `l` → Main LR · `0`/`00` → unity on the selected fader.
 //! Commits on Enter, after a short pause, or as soon as no longer number is possible
 //! (`2` commits immediately because there is no Ch 20+).
+//!
+//! In *positional* mode (per bank) plain digits pick the n-th strip of the current bank
+//! instead of the mixer channel; prefixed entries (`a3`, `d1`, …) stay global.
 
 use std::time::{Duration, Instant};
 use xair_proto::strip::{BUSES, CHANNELS, DCAS, FX};
@@ -52,6 +55,8 @@ impl Prefix {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Entry {
     Select(StripId),
+    /// 1-based position in the current bank (positional mode).
+    Position(u8),
     Unity,
 }
 
@@ -60,9 +65,20 @@ pub struct NumberEntry {
     prefix: Option<Prefix>,
     digits: String,
     last: Option<Instant>,
+    /// `Some(bank length)` = positional mode.
+    positional: Option<u8>,
 }
 
 impl NumberEntry {
+    /// Switch numbering mode (call when the bank changes). `Some(len)` = positional.
+    pub fn set_positional(&mut self, len: Option<u8>) {
+        self.positional = len;
+    }
+
+    fn plain_max(&self) -> u8 {
+        self.positional.unwrap_or(CHANNELS)
+    }
+
     pub fn active(&self) -> bool {
         self.prefix.is_some() || !self.digits.is_empty()
     }
@@ -75,12 +91,18 @@ impl NumberEntry {
         if self.prefix.is_none() && self.digits.starts_with('0') {
             return Some("Unity (0 dB)".into());
         }
-        let p = self.prefix.unwrap_or(Prefix::Ch);
-        Some(format!("{} {}_", p.label(), self.digits))
+        let label = match (self.prefix, self.positional) {
+            (Some(p), _) => p.label(),
+            (None, Some(_)) => "Bank #",
+            (None, None) => Prefix::Ch.label(),
+        };
+        Some(format!("{label} {}_", self.digits))
     }
 
     pub fn cancel(&mut self) {
-        *self = NumberEntry::default();
+        self.prefix = None;
+        self.digits.clear();
+        self.last = None;
     }
 
     /// Feed a typed character. Returns `None` if the character isn't ours (caller may use it).
@@ -142,16 +164,19 @@ impl NumberEntry {
         if self.prefix.is_none() && self.digits.starts_with('0') {
             return Some(Entry::Unity);
         }
-        let p = self.prefix.unwrap_or(Prefix::Ch);
         let n: u8 = self.digits.parse().ok()?;
-        (1..=p.max()).contains(&n).then(|| Entry::Select(p.strip(n)))
+        match self.prefix {
+            Some(p) => (1..=p.max()).contains(&n).then(|| Entry::Select(p.strip(n))),
+            None if self.positional.is_some() => (1..=self.plain_max()).contains(&n).then_some(Entry::Position(n)),
+            None => (1..=CHANNELS).contains(&n).then_some(Entry::Select(StripId::Ch(n))),
+        }
     }
 
     /// Commit now if appending another digit can't give a valid number.
     fn try_commit_early(&mut self) -> Option<Entry> {
-        let p = self.prefix.unwrap_or(Prefix::Ch);
+        let max = self.prefix.map(Prefix::max).unwrap_or(self.plain_max());
         let n: u32 = self.digits.parse().ok()?;
-        if n * 10 > p.max() as u32 {
+        if n * 10 > max as u32 {
             let r = self.resolve();
             self.cancel();
             return r;
@@ -217,6 +242,22 @@ mod tests {
         assert_eq!(typed("00").1, vec![Entry::Unity]);
         let (mut e, _) = typed("0");
         assert_eq!(e.enter(), Some(Entry::Unity));
+    }
+
+    #[test]
+    fn positional_mode() {
+        let mut e = NumberEntry::default();
+        e.set_positional(Some(8));
+        let now = Instant::now();
+        assert_eq!(e.char('3', now), Some(Some(Entry::Position(3)))); // 30+ impossible → instant
+        assert_eq!(e.char('9', now), Some(None)); // out of range → dropped
+        assert!(!e.active());
+        e.set_positional(Some(12));
+        assert_eq!(e.char('1', now), Some(None)); // could be 10–12
+        assert_eq!(e.char('2', now), Some(Some(Entry::Position(12))));
+        // prefixes stay global
+        assert_eq!(e.char('a', now), Some(None));
+        assert_eq!(e.char('2', now), Some(Some(Entry::Select(StripId::Bus(2)))));
     }
 
     #[test]

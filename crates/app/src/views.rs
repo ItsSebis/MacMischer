@@ -46,7 +46,8 @@ fn name_tag(ui: &mut Ui, c: &mut Ctx, s: StripId, width: f32) {
 }
 
 /// One channel strip. `send` = bank is bound to a bus: fader controls that send.
-pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<SendTo>) {
+/// `pos` = 1-based bank position shown in the footer (positional banks).
+pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<SendTo>, pos: Option<usize>) {
     let sel = c.selected == s;
     let send = send.filter(|_| s.has_sends());
     let (frame_rect, _) = ui.allocate_exact_size(Vec2::new(STRIP_W, height), Sense::hover());
@@ -124,7 +125,10 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
             c.actions.push(Action::Set(solo, Value::Int(!soloed as i32)));
         }
     });
-    ui.vertical_centered(|ui| {
+    ui.horizontal(|ui| {
+        if let Some(p) = pos {
+            ui.label(egui::RichText::new(format!("#{p}")).size(12.0).strong().color(theme::ACCENT));
+        }
         ui.label(egui::RichText::new(s.short()).size(11.0).color(theme::DIM));
     });
 }
