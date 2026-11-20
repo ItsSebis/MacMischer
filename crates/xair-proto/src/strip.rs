@@ -128,6 +128,24 @@ impl StripId {
             StripId::Main => "LR".into(),
         }
     }
+
+    /// Inverse of [`StripId::short`]; case-insensitive, `None` if unknown or out of range.
+    pub fn from_short(s: &str) -> Option<StripId> {
+        let s = s.trim().to_ascii_uppercase();
+        let num = |t: &str| {
+            if t.is_empty() || !t.bytes().all(|b| b.is_ascii_digit()) { None } else { t.parse::<u8>().ok() }
+        };
+        let id = match s.as_str() {
+            "AUX" => StripId::AuxIn,
+            "LR" => StripId::Main,
+            _ if s.starts_with("FX") => StripId::FxRtn(num(&s[2..])?),
+            _ if s.starts_with('B') => StripId::Bus(num(&s[1..])?),
+            _ if s.starts_with('S') => StripId::FxSend(num(&s[1..])?),
+            _ if s.starts_with('D') => StripId::Dca(num(&s[1..])?),
+            _ => StripId::Ch(num(&s)?),
+        };
+        id.is_valid().then_some(id)
+    }
 }
 
 /// Path after the first `segments` segments of `path` (keeps the leading `/`).
@@ -159,6 +177,17 @@ impl fmt::Display for StripId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_round_trip() {
+        for s in StripId::all() {
+            assert_eq!(StripId::from_short(&s.short()), Some(s));
+            assert_eq!(StripId::from_short(&s.short().to_lowercase()), Some(s));
+        }
+        for bad in ["", "0", "17", "FX5", "B7", "S5", "D5", "x", "B", "+3"] {
+            assert_eq!(StripId::from_short(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn prefix_round_trip() {

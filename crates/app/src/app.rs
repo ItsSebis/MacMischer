@@ -2,7 +2,8 @@
 
 use crate::actions::{nudge_fader, Action};
 use crate::bank_editor::BankEditor;
-use crate::banks::{self, Bank};
+use crate::banks::Bank;
+use crate::session::Session;
 use crate::input::{Entry, NumberEntry};
 use crate::keymap::{Binding, Keymap};
 use crate::theme;
@@ -11,14 +12,13 @@ use crate::widgets::{Ballistics, UNITY};
 use eframe::egui;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use xair_core::{Mixer, MixerInfo, Status};
-use xair_proto::{Param, StripId, Value, MIXER_PORT};
+use crate::connect::{parse_addr, Finder};
+use xair_core::{Mixer, Status};
+use xair_proto::{Param, StripId, Value};
 
 enum Conn {
-    Discovering(mpsc::Receiver<Vec<(SocketAddr, MixerInfo)>>),
-    NotFound,
+    Finding(Finder),
     Mixer(Mixer),
 }
 
@@ -26,10 +26,8 @@ pub struct App {
     ctx: egui::Context,
     conn: Conn,
     _mock: Option<xair_mock::MockMixer>,
-    manual_ip: String,
     selected: StripId,
-    banks: Vec<Bank>,
-    bank: usize,
+    session: Session,
     ball: HashMap<StripId, Ballistics>,
     entry: NumberEntry,
     keymap: Keymap,
@@ -39,14 +37,14 @@ pub struct App {
 
 impl App {
     pub fn new(ctx: egui::Context, ip: Option<String>, mock: bool) -> App {
+        let session = Session::load();
+        let remembered = session.prefs.last_mixer.as_deref().and_then(parse_addr);
         let mut app = App {
             ctx,
-            conn: Conn::NotFound,
+            conn: Conn::Finding(Finder::new(remembered, true)),
             _mock: None,
-            manual_ip: String::new(),
             selected: StripId::Ch(1),
-            banks: banks::defaults(),
-            bank: 0,
+            session,
             ball: HashMap::new(),
             entry: NumberEntry::default(),
             keymap: Keymap::default(),
@@ -55,34 +53,40 @@ impl App {
         };
         // Dev aid for screenshots: MM_SHOW=editor|help opens that dialog on start.
         match std::env::var("MM_SHOW").as_deref() {
-            Ok("editor") => app.editor = Some(BankEditor::open(0, &app.banks[0])),
+            Ok("editor") => app.editor = Some(BankEditor::open(0, &app.session.banks[0])),
             Ok("help") => app.show_help = true,
             Ok("dca") => app.selected = StripId::Dca(1),
             _ => {}
         }
         if mock {
             let m = xair_mock::MockMixer::start();
-            app.connect(m.addr());
+            app.connect_to(m.addr(), false);
             app._mock = Some(m);
         } else if let Some(addr) = ip.as_deref().and_then(parse_addr) {
             app.connect(addr);
-        } else {
-            app.start_discovery();
         }
         app
     }
 
-    fn start_discovery(&mut self) {
-        let (tx, rx) = mpsc::channel();
-        let ctx = self.ctx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(xair_core::discover(&[], Duration::from_millis(800)));
-            ctx.request_repaint();
-        });
-        self.conn = Conn::Discovering(rx);
+    /// Drop the current connection and show the mixer list ("Switch mixer").
+    fn switch_mixer(&mut self) {
+        let current = match &self.conn {
+            Conn::Mixer(m) => Some(m.addr()),
+            Conn::Finding(_) => None,
+        };
+        self.conn = Conn::Finding(Finder::new(current, false));
     }
 
     fn connect(&mut self, addr: SocketAddr) {
+        self.connect_to(addr, true);
+    }
+
+    /// `remember` = store as last mixer in the preferences.
+    fn connect_to(&mut self, addr: SocketAddr, remember: bool) {
+        if remember {
+            self.session.prefs.last_mixer = Some(addr.to_string());
+            self.session.prefs.save();
+        }
         let mixer = Mixer::connect(addr);
         let ctx = self.ctx.clone();
         mixer.set_repaint(move || ctx.request_repaint());
@@ -90,7 +94,7 @@ impl App {
     }
 
     fn current_bank(&self) -> &Bank {
-        &self.banks[self.bank]
+        &self.session.banks[self.session.bank]
     }
 
     /// The level parameter the keyboard controls for strip `s` (send in a bus-bound bank).
@@ -154,22 +158,22 @@ impl App {
                 Action::Set(p, v) => m.set(p, v),
                 Action::Select(s) => self.selected = m.state().link_leader(s),
                 Action::SelectPosition(n) => {
-                    let shown = m.state().display_strips(&self.banks[self.bank].strips);
+                    let shown = m.state().display_strips(&self.session.banks[self.session.bank].strips);
                     if let Some(s) = shown.get(n as usize - 1) {
                         self.selected = *s;
                     }
                 }
                 Action::SelectBank(i) => {
-                    if i < self.banks.len() {
-                        self.bank = i;
+                    if i < self.session.banks.len() {
+                        self.session.bank = i;
                     }
                 }
                 Action::BankStep(d) => {
-                    let n = self.banks.len() as i32;
-                    self.bank = (self.bank as i32 + d).rem_euclid(n) as usize;
+                    let n = self.session.banks.len() as i32;
+                    self.session.bank = (self.session.bank as i32 + d).rem_euclid(n) as usize;
                 }
                 Action::StripStep(d) => {
-                    let strips = &m.state().display_strips(&self.banks[self.bank].strips);
+                    let strips = &m.state().display_strips(&self.session.banks[self.session.bank].strips);
                     if strips.is_empty() {
                         continue;
                     }
@@ -206,64 +210,19 @@ impl App {
         }
     }
 
-    fn connection_screen(&mut self, ui: &mut egui::Ui) {
-        if let Conn::Discovering(rx) = &self.conn {
-            match rx.try_recv() {
-                Ok(found) => match found.first() {
-                    Some((addr, info)) => {
-                        tracing::info!("discovered {} at {addr}", info.name);
-                        let addr = *addr;
-                        self.connect(addr);
-                        return;
-                    }
-                    None => self.conn = Conn::NotFound,
-                },
-                Err(mpsc::TryRecvError::Empty) => {}
-                Err(_) => self.conn = Conn::NotFound,
-            }
-        }
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.3);
-                if let Conn::Discovering(_) = self.conn {
-                    ui.spinner();
-                    ui.label("Searching for X Air mixers…");
-                    return;
-                }
-                ui.heading("No mixer found");
-                ui.label("Is the XR18 switched on and on the same network?");
-                ui.add_space(8.0);
-                if ui.button("Search again").clicked() {
-                    self.start_discovery();
-                }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(ui.available_width() / 2.0 - 130.0);
-                    ui.label("IP:");
-                    let r = ui.text_edit_singleline(&mut self.manual_ip);
-                    let go = ui.button("Connect").clicked()
-                        || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                    if go {
-                        if let Some(a) = parse_addr(&self.manual_ip) {
-                            self.connect(a);
-                        }
-                    }
-                });
-            });
-        });
-    }
-
     fn bank_tabs(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         ui.horizontal_centered(|ui| {
+            self.session.menu(ui);
+            ui.separator();
             let mut edit = None;
             let mut delete = None;
-            for (i, b) in self.banks.iter().enumerate() {
+            for (i, b) in self.session.banks.iter().enumerate() {
                 let hash = if b.positional { "  #" } else { "" };
                 let mut label = egui::RichText::new(format!("F{}  {}{hash}", i + 1, b.name));
                 if b.bus.is_some() {
                     label = label.color(theme::SOLO);
                 }
-                let r = ui.selectable_label(i == self.bank, label);
+                let r = ui.selectable_label(i == self.session.bank, label);
                 if r.clicked() {
                     actions.push(Action::SelectBank(i));
                 }
@@ -280,18 +239,18 @@ impl App {
                 });
             }
             if ui.button(" + ").on_hover_text("New bank").clicked() {
-                self.banks.push(Bank::new("New bank", []));
-                edit = Some(self.banks.len() - 1);
-                self.bank = self.banks.len() - 1;
+                self.session.banks.push(Bank::new("New bank", []));
+                edit = Some(self.session.banks.len() - 1);
+                self.session.bank = self.session.banks.len() - 1;
             }
             if let Some(i) = delete {
-                if self.banks.len() > 1 {
-                    self.banks.remove(i);
-                    self.bank = self.bank.min(self.banks.len() - 1);
+                if self.session.banks.len() > 1 {
+                    self.session.banks.remove(i);
+                    self.session.bank = self.session.bank.min(self.session.banks.len() - 1);
                 }
             }
             if let Some(i) = edit {
-                self.editor = Some(BankEditor::open(i, &self.banks[i]));
+                self.editor = Some(BankEditor::open(i, &self.session.banks[i]));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("?").on_hover_text("Keyboard shortcuts").clicked() {
@@ -321,10 +280,6 @@ fn entry_action(e: Entry) -> Action {
     }
 }
 
-fn parse_addr(s: &str) -> Option<SocketAddr> {
-    let s = s.trim();
-    s.parse().ok().or_else(|| format!("{s}:{MIXER_PORT}").parse().ok())
-}
 
 fn help_window(ctx: &egui::Context, open: &mut bool) {
     egui::Window::new("Keyboard")
@@ -344,9 +299,15 @@ fn help_window(ctx: &egui::Context, open: &mut bool) {
 }
 
 impl eframe::App for App {
+    fn on_exit(&mut self) {
+        self.session.save_now();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if !matches!(self.conn, Conn::Mixer(_)) {
-            self.connection_screen(ui);
+        if let Conn::Finding(f) = &mut self.conn {
+            if let Some(addr) = f.ui(ui) {
+                self.connect(addr);
+            }
             return;
         }
         let ctx = ui.ctx().clone();
@@ -355,12 +316,13 @@ impl eframe::App for App {
         // Tabs need &mut self; render them before borrowing mixer state.
         egui::Panel::bottom("banks").exact_size(40.0).show(ui, |ui| self.bank_tabs(ui, &mut actions));
 
+        let mut switch = false;
         let Conn::Mixer(mixer) = &self.conn else { unreachable!() };
         let status = mixer.status();
         let st_guard = mixer.state();
         let meters = mixer.meters().clone();
         let st = &*st_guard;
-        let bank = &self.banks[self.bank];
+        let bank = &self.session.banks[self.session.bank];
         let mut c = views::Ctx {
             st,
             meters: &meters,
@@ -382,12 +344,18 @@ impl eframe::App for App {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 ui.painter().circle_filled(r.center(), 4.5, col);
                 ui.colored_label(col, txt);
-                if let Some(i) = &st.info {
-                    ui.label(
-                        egui::RichText::new(format!("{}  {}  fw {}  {}", i.name, i.model, i.firmware, mixer.addr().ip()))
-                            .color(theme::DIM),
-                    );
-                }
+                let title = match &st.info {
+                    Some(i) => format!("{}  {}  fw {}  {}", i.name, i.model, i.firmware, mixer.addr().ip()),
+                    None => mixer.addr().to_string(),
+                };
+                ui.menu_button(egui::RichText::new(title).color(theme::DIM), |ui| {
+                    if ui.button("Switch mixer…").clicked() {
+                        switch = true;
+                    }
+                    if ui.button("Re-read mixer state").clicked() {
+                        mixer.resync();
+                    }
+                });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let idx = st.snap_index();
                     if idx > 0 {
@@ -441,13 +409,17 @@ impl eframe::App for App {
         if let Some(ed) = &mut self.editor {
             if let Some(result) = ed.show(&ctx, &names) {
                 if let Some((i, bank)) = result {
-                    self.banks[i] = bank;
+                    self.session.banks[i] = bank;
                 }
                 self.editor = None;
             }
         }
         help_window(&ctx, &mut self.show_help);
         self.apply(actions);
+        if switch {
+            self.switch_mixer();
+        }
+        self.session.autosave(&ctx);
         // Keep meters animating smoothly between network packets.
         ctx.request_repaint_after(Duration::from_millis(33));
     }

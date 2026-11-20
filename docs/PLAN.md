@@ -11,7 +11,7 @@
 - [x] M2 Core (2026-11-20): proto model + xair-core + xair-mock; 4 integration tests; hardware full sync 693 params in ~300 ms, meters 20 Hz
 - [x] M3 Mixing UI (2026-11-20): strips, meter bridge, detail panel (gain/+48V/pan/sends), Main strip fixed right, bank tabs; verified on hardware (read-only)
 - [x] M4 Keyboard + banks (2026-11-20): number entry w/ early commit, keymap, nudges, bank editor (rename/reorder/add/remove/bind to bus), monitor banks, help (?). Keyboard NOT yet tested by user
-- [ ] M5 Show files + connection UX
+- [x] M5 Show files + connection UX (2026-11-20): Show menu (open/new/copy/import banks/rename/open folder), autosave 0.8 s after change + on exit, remembered mixer auto-connect, mixer picker, auto-retry while mixer off, Switch mixer menu
 - [ ] M6 Scenes & routing + safety → v1
 - [ ] M7+ post-v1
 
@@ -83,3 +83,4 @@ crates/
 - 2026-11-20: User feedback round 1 → per-bank positional numbering, ←/→ strip stepping, bank editor fits screen + painted icons (default egui font lacks arrow glyphs: avoid ↑↓←→✕＋●), DCA assignment UI. Dev aid: MM_SHOW=editor|help|dca. Ideas offered: DCA spill bank, rename/colour strips.
 - 2026-11-20: Buses + FX sends have grp/dca + grp/mute (verified); LR has none. Added mute-group membership + 4 mute-group masters (/config/mute/N) and phones/monitor level (/config/solo/level) in right column. Not yet handled: channel/bus stereo links (/config/chlink/1-2, /config/buslink/1-2).
 - 2026-11-20: Stereo-linked pairs as wide strips (verified on hardware: 3-4, 5-6, 7-8, 9-10, 15-16, bus 3-4 linked). Next: M5.
+- 2026-11-20: M5 done. Files: shows in data dir (`~/.local/share/macmischer/shows/*.toml`, macOS `~/Library/Application Support/MacMischer/shows`), prefs in config dir (`~/.config/macmischer/prefs.toml`). Keymap is not yet stored in show files (deferred until keymap editing exists). Next: M6 scenes, routing, safety.
