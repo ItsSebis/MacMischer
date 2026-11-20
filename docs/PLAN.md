@@ -7,7 +7,7 @@
 - [x] Architecture + milestones written
 - [x] User approval (2026-11-20)
 - [x] M0 Scaffold (2026-11-20): workspace builds, 3 fader-law tests pass, clippy clean, dark window launches
-- [ ] M1 Protocol spike (hardware)
+- [x] M1 Protocol spike (2026-11-20): see docs/PROTOCOL.md
 - [ ] M2 Core
 - [ ] M3 Mixing UI
 - [ ] M4 Keyboard + banks
@@ -73,3 +73,4 @@ crates/
 
 ## Session log
 - 2026-11-20: planning done, M0 done. Notes: egui/eframe 0.37 API = `App::ui(&mut self, ui, frame)`, `egui::Panel::top(..).show(ui, ..)`; eframe needs `x11`+`wayland` features on Linux with default-features off. Deps: rosc 0.11, toml 1, directories 6. Next: M1 probe CLI against real XR18.
+- 2026-11-20: M1 done — probe CLI (cargo run -p xair-proto --bin xair-probe), findings in PROTOCOL.md. Next: M2 core.
