@@ -1,0 +1,11 @@
+[package]
+name = "icon-gen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Renders assets/icon/icon.svg into PNG sizes (+ raw RGBA for the window icon).
+# Run: cargo run -p icon-gen
+[dependencies]
+resvg = "0.50"

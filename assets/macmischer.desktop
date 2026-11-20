@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MacMischer
+Comment=Keyboard-first controller for Behringer X Air mixers
+Exec=macmischer
+Icon=macmischer
+Categories=AudioVideo;Audio;Mixer;
+StartupWMClass=macmischer

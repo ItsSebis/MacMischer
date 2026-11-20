@@ -14,6 +14,12 @@ cargo run --release -p macmischer -- --mock  # built-in fake mixer, no hardware 
 macOS app bundle: `cargo install cargo-bundle && cargo bundle --release -p macmischer`
 → `target/release/bundle/osx/MacMischer.app`.
 
+Linux desktop integration (icon in launcher/title bar under Wayland):
+`install -Dm644 assets/icon/icon-256.png ~/.local/share/icons/hicolor/256x256/apps/macmischer.png`
+and `install -Dm644 assets/macmischer.desktop ~/.local/share/applications/macmischer.desktop`.
+
+The icon source is `assets/icon/icon.svg`; regenerate PNGs with `cargo run -p icon-gen`.
+
 ## Keyboard
 
 | Keys | Action |

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/xair-proto", "crates/xair-core", "crates/xair-mock", "crates/app"]
+members = ["crates/xair-proto", "crates/xair-core", "crates/xair-mock", "crates/app", "tools/icon-gen"]
 
 [workspace.package]
 version = "0.1.0"

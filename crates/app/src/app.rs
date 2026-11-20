@@ -247,8 +247,7 @@ impl App {
             let mut edit = None;
             let mut delete = None;
             for (i, b) in self.session.banks.iter().enumerate() {
-                let hash = if b.positional { "  #" } else { "" };
-                let mut label = egui::RichText::new(format!("F{}  {}{hash}", i + 1, b.name));
+                let mut label = egui::RichText::new(format!("F{}  {}", i + 1, b.name));
                 if b.bus.is_some() {
                     label = label.color(theme::SOLO);
                 }
