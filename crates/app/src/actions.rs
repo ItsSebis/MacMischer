@@ -16,6 +16,8 @@ pub enum Action {
     PanNudge(f32),
     ToggleMute,
     ToggleSolo,
+    /// Solo on/off for a strip (and its linked partner).
+    SetSolo(StripId, bool),
     BankStep(i32),
     /// Select next/previous strip within the current bank.
     StripStep(i32),

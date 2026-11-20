@@ -9,6 +9,7 @@ use xair_core::{Meters, MixerState};
 use xair_proto::{fader, Param, SendTo, StripId, Value};
 
 pub const STRIP_W: f32 = 86.0;
+pub const STRIP_W_STEREO: f32 = 118.0;
 
 /// Everything a view needs for one frame (read-only) plus the action sink.
 pub struct Ctx<'a> {
@@ -28,6 +29,10 @@ impl Ctx<'_> {
 
 /// Name tag with strip colour; click selects.
 fn name_tag(ui: &mut Ui, c: &mut Ctx, s: StripId, width: f32) {
+    name_tag_with(ui, c, s, width, c.st.name(s), 10);
+}
+
+fn name_tag_with(ui: &mut Ui, c: &mut Ctx, s: StripId, width: f32, mut name: String, max_chars: usize) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::click());
     let col = theme::strip_color(c.st.color(s));
     let inverted = c.st.color(s) >= 8;
@@ -35,9 +40,8 @@ fn name_tag(ui: &mut Ui, c: &mut Ctx, s: StripId, width: f32) {
     let (bg, fg) = if inverted { (col, egui::Color32::BLACK) } else { (theme::BG, col) };
     p.rect_filled(rect, 3.0, bg);
     p.rect_stroke(rect, 3.0, Stroke::new(1.5, col), StrokeKind::Inside);
-    let mut name = c.st.name(s);
-    if name.chars().count() > 10 {
-        name = name.chars().take(10).collect();
+    if name.chars().count() > max_chars {
+        name = name.chars().take(max_chars).collect();
     }
     p.text(rect.center(), Align2::CENTER_CENTER, name, FontId::proportional(12.5), fg);
     if resp.clicked() {
@@ -48,9 +52,12 @@ fn name_tag(ui: &mut Ui, c: &mut Ctx, s: StripId, width: f32) {
 /// One channel strip. `send` = bank is bound to a bus: fader controls that send.
 /// `pos` = 1-based bank position shown in the footer (positional banks).
 pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<SendTo>, pos: Option<usize>) {
-    let sel = c.selected == s;
+    // A stereo-linked pair renders as one wide strip (leader = odd strip).
+    let partner = c.st.linked_partner(s).filter(|p| *p > s);
+    let sel = c.selected == s || Some(c.selected) == partner;
     let send = send.filter(|_| s.has_sends());
-    let (frame_rect, _) = ui.allocate_exact_size(Vec2::new(STRIP_W, height), Sense::hover());
+    let width = if partner.is_some() { STRIP_W_STEREO } else { STRIP_W };
+    let (frame_rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let bg = if sel { theme::STRIP_SEL } else { theme::STRIP };
     ui.painter().rect_filled(frame_rect, 4.0, bg);
     if sel {
@@ -69,7 +76,15 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
     ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
     let w = ui.available_width();
 
-    name_tag(ui, c, s, w);
+    match partner {
+        Some(p) => {
+            let (a, b) = (c.st.name(s), c.st.name(p));
+            let both = format!("{a} · {b}");
+            let label = if both.chars().count() <= 15 { both } else { a };
+            name_tag_with(ui, c, s, w, label, 15);
+        }
+        None => name_tag(ui, c, s, w),
+    }
     let (param, value) = match send {
         Some(t) => (Param::SendLevel(s, t), c.st.send_level(s, t)),
         None => (Param::Fader(s), c.st.fader(s)),
@@ -84,9 +99,15 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
     let bottom_h = 26.0 + 18.0 + 8.0;
     let fh = (ui.available_height() - bottom_h).max(80.0);
     ui.horizontal(|ui| {
-        let (mrect, mresp) = ui.allocate_exact_size(Vec2::new(10.0, fh), Sense::click());
+        let mw = if partner.is_some() { 21.0 } else { 10.0 };
+        let (mrect, mresp) = ui.allocate_exact_size(Vec2::new(mw, fh), Sense::click());
         let (lvl, peak) = c.meter(s);
-        if !matches!(s, StripId::Dca(_)) {
+        if let Some(p) = partner {
+            let (rl, rp) = c.meter(p);
+            let half = Rect::from_min_size(mrect.min, Vec2::new(10.0, fh));
+            widgets::paint_meter(ui, half, lvl, peak);
+            widgets::paint_meter(ui, half.translate(Vec2::new(11.0, 0.0)), rl, rp);
+        } else if !matches!(s, StripId::Dca(_)) {
             if let Some((l, r)) = c.meters.stereo(s) {
                 let half = Rect::from_min_size(mrect.min, Vec2::new(4.5, fh));
                 widgets::paint_meter(ui, half, l, l);
@@ -99,13 +120,15 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
             c.actions.push(Action::Select(s));
         }
         let id = egui::Id::unique(("fader", s, send));
-        if let Some(v) = widgets::fader(ui, Vec2::new(w - 14.0, fh), value, accent, id) {
+        if let Some(v) = widgets::fader(ui, Vec2::new(w - mw - 4.0, fh), value, accent, id) {
             c.actions.push(Action::Set(param, Value::Float(v)));
             c.actions.push(Action::Select(s));
         }
     });
 
-    if s.has_pan() && send.is_none() {
+    if partner.is_some() {
+        ui.label(egui::RichText::new("STEREO").size(9.5).color(theme::DIM));
+    } else if s.has_pan() && send.is_none() {
         let id = egui::Id::unique(("pan", s));
         if let Some(v) = widgets::hbar(ui, Vec2::new(w, 10.0), c.st.pan(s), true, id) {
             c.actions.push(Action::Set(Param::Pan(s), Value::Float(v)));
@@ -119,17 +142,20 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
         if widgets::toggle(ui, Vec2::new(bw, 22.0), "M", muted, theme::MUTE).clicked() {
             c.actions.push(Action::Set(Param::On(s), Value::Int(muted as i32)));
         }
-        let solo = Param::Solo(s.solo_index());
-        let soloed = c.st.get(solo).and_then(Value::as_i32).unwrap_or(0) != 0;
+        let soloed = c.st.soloed(s);
         if widgets::toggle(ui, Vec2::new(bw, 22.0), "S", soloed, theme::SOLO).clicked() {
-            c.actions.push(Action::Set(solo, Value::Int(!soloed as i32)));
+            c.actions.push(Action::SetSolo(s, !soloed));
         }
     });
     ui.horizontal(|ui| {
         if let Some(p) = pos {
             ui.label(egui::RichText::new(format!("#{p}")).size(12.0).strong().color(theme::ACCENT));
         }
-        ui.label(egui::RichText::new(s.short()).size(11.0).color(theme::DIM));
+        let label = match partner {
+            Some(p) => format!("{}-{}", s.short(), p.short().trim_start_matches('B')),
+            None => s.short(),
+        };
+        ui.label(egui::RichText::new(label).size(11.0).color(theme::DIM));
     });
 }
 
@@ -189,10 +215,9 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
                 if widgets::toggle(ui, Vec2::new(64.0, 28.0), "MUTE", muted, theme::MUTE).clicked() {
                     c.actions.push(Action::Set(Param::On(s), Value::Int(muted as i32)));
                 }
-                let solo = Param::Solo(s.solo_index());
-                let soloed = c.st.get(solo).and_then(Value::as_i32).unwrap_or(0) != 0;
+                let soloed = c.st.soloed(s);
                 if widgets::toggle(ui, Vec2::new(64.0, 28.0), "SOLO", soloed, theme::SOLO).clicked() {
-                    c.actions.push(Action::Set(solo, Value::Int(!soloed as i32)));
+                    c.actions.push(Action::SetSolo(s, !soloed));
                 }
             });
         });

@@ -65,6 +65,43 @@ impl MixerState {
     pub fn color(&self, s: StripId) -> i32 {
         self.i(Param::Color(s), 0)
     }
+    pub fn soloed(&self, s: StripId) -> bool {
+        self.i(Param::Solo(s.solo_index()), 0) != 0
+    }
+
+    /// The stereo-linked partner of a channel or bus, if linked.
+    pub fn linked_partner(&self, s: StripId) -> Option<StripId> {
+        let (n, link, mk): (u8, Param, fn(u8) -> StripId) = match s {
+            StripId::Ch(n) => (n, Param::ChLink(n.div_ceil(2)), StripId::Ch),
+            StripId::Bus(n) => (n, Param::BusLink(n.div_ceil(2)), StripId::Bus),
+            _ => return None,
+        };
+        if self.i(link, 0) == 0 {
+            return None;
+        }
+        Some(mk(if n % 2 == 1 { n + 1 } else { n - 1 }))
+    }
+
+    /// Odd (left) strip of a linked pair, else the strip itself.
+    pub fn link_leader(&self, s: StripId) -> StripId {
+        match self.linked_partner(s) {
+            Some(p) if p < s => p,
+            _ => s,
+        }
+    }
+
+    /// Bank strips as displayed: linked pairs collapse onto their leader, order kept.
+    pub fn display_strips(&self, strips: &[StripId]) -> Vec<StripId> {
+        let mut out: Vec<StripId> = Vec::with_capacity(strips.len());
+        for &s in strips {
+            let l = self.link_leader(s);
+            if !out.contains(&l) {
+                out.push(l);
+            }
+        }
+        out
+    }
+
     /// Mute group membership bitmask (bit 0 = group 1).
     pub fn mute_mask(&self, s: StripId) -> i32 {
         self.i(Param::MuteGroups(s), 0)

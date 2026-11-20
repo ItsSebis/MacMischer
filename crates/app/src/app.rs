@@ -152,9 +152,10 @@ impl App {
             let s = self.selected;
             match a {
                 Action::Set(p, v) => m.set(p, v),
-                Action::Select(s) => self.selected = s,
+                Action::Select(s) => self.selected = m.state().link_leader(s),
                 Action::SelectPosition(n) => {
-                    if let Some(s) = self.banks[self.bank].strips.get(n as usize - 1) {
+                    let shown = m.state().display_strips(&self.banks[self.bank].strips);
+                    if let Some(s) = shown.get(n as usize - 1) {
                         self.selected = *s;
                     }
                 }
@@ -168,7 +169,7 @@ impl App {
                     self.bank = (self.bank as i32 + d).rem_euclid(n) as usize;
                 }
                 Action::StripStep(d) => {
-                    let strips = &self.banks[self.bank].strips;
+                    let strips = &m.state().display_strips(&self.banks[self.bank].strips);
                     if strips.is_empty() {
                         continue;
                     }
@@ -197,10 +198,10 @@ impl App {
                     m.set(Param::On(s), Value::Int(!on as i32));
                 }
                 Action::ToggleSolo => {
-                    let p = Param::Solo(s.solo_index());
-                    let cur = m.state().get(p).and_then(Value::as_i32).unwrap_or(0);
-                    m.set(p, Value::Int((cur == 0) as i32));
+                    let on = m.state().soloed(s);
+                    set_solo(m, s, !on);
                 }
+                Action::SetSolo(s, on) => set_solo(m, s, on),
             }
         }
     }
@@ -301,6 +302,14 @@ impl App {
                 }
             });
         });
+    }
+}
+
+/// Solo a strip; linked partners follow (solo isn't mirrored by `Mixer::set`).
+fn set_solo(m: &Mixer, s: StripId, on: bool) {
+    let partner = m.state().linked_partner(s);
+    for x in std::iter::once(s).chain(partner) {
+        m.set(Param::Solo(x.solo_index()), Value::Int(on as i32));
     }
 }
 
@@ -419,7 +428,7 @@ impl eframe::App for App {
             egui::ScrollArea::horizontal().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    for (i, &s) in bank.strips.iter().enumerate() {
+                    for (i, &s) in st.display_strips(&bank.strips).iter().enumerate() {
                         let pos = bank.positional.then_some(i + 1);
                         views::strip(ui, &mut c, s, h - 4.0, bank.bus, pos);
                     }

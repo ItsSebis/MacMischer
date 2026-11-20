@@ -58,6 +58,8 @@ fn default_for(p: Param) -> Value {
         }),
         Param::DcaGroups(_) | Param::MuteGroups(_) | Param::MuteGroupOn(_) => Value::Int(0),
         Param::MonitorLevel => Value::Float(0.75),
+        Param::ChLink(k) => Value::Int((k == 2) as i32), // ch 3-4 linked in the mock
+        Param::BusLink(_) => Value::Int(0),
         Param::MainAssign(_) => Value::Int(1),
         Param::SendLevel(..) => Value::Float(0.0),
         Param::SendTap(..) => Value::Int(4),

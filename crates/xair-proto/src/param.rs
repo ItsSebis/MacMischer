@@ -87,6 +87,10 @@ pub enum Param {
     MuteGroupOn(u8),
     /// float 0..1, fader law — monitor / phones level
     MonitorLevel,
+    /// int 1 = channels 2k-1/2k stereo-linked (pair k = 1..8)
+    ChLink(u8),
+    /// int 1 = buses 2k-1/2k stereo-linked (pair k = 1..3)
+    BusLink(u8),
     /// int 1 = assigned to main LR
     MainAssign(StripId),
     /// float 0..1, fader law
@@ -119,6 +123,8 @@ impl Param {
             Param::MuteGroups(s) => format!("{}/grp/mute", s.prefix()),
             Param::MuteGroupOn(n) => format!("/config/mute/{n}"),
             Param::MonitorLevel => "/config/solo/level".into(),
+            Param::ChLink(k) => format!("/config/chlink/{}-{}", 2 * k - 1, 2 * k),
+            Param::BusLink(k) => format!("/config/buslink/{}-{}", 2 * k - 1, 2 * k),
             Param::MainAssign(s) => format!("{}/mix/lr", s.prefix()),
             Param::SendLevel(s, t) => format!("{}/mix/{:02}/level", s.prefix(), t.index()),
             Param::SendTap(s, t) => format!("{}/mix/{:02}/tap", s.prefix(), t.index()),
@@ -164,7 +170,32 @@ impl Param {
             ["", "-snap", "index"] => Some(Param::SnapIndex),
             ["", "config", "mute", n] => Some(Param::MuteGroupOn(n.parse().ok()?)),
             ["", "config", "solo", "level"] => Some(Param::MonitorLevel),
+            ["", "config", "chlink", pair] => Some(Param::ChLink(link_pair(pair)?)),
+            ["", "config", "buslink", pair] => Some(Param::BusLink(link_pair(pair)?)),
             ["", "-snap", n, "name"] => Some(Param::SnapName(n.parse().ok()?)),
+            _ => None,
+        }
+    }
+
+    /// The same parameter on another strip (for mirroring to a linked partner).
+    pub fn with_strip(self, to: StripId) -> Option<Param> {
+        Some(match self {
+            Param::Fader(_) => Param::Fader(to),
+            Param::On(_) => Param::On(to),
+            Param::SendLevel(_, t) => Param::SendLevel(to, t),
+            Param::DcaGroups(_) => Param::DcaGroups(to),
+            Param::MuteGroups(_) => Param::MuteGroups(to),
+            Param::Solo(_) => Param::Solo(to.solo_index()),
+            _ => return None,
+        })
+    }
+
+    /// The strip this parameter belongs to, if any.
+    pub fn strip(self) -> Option<StripId> {
+        match self {
+            Param::Fader(s) | Param::On(s) | Param::Pan(s) | Param::Name(s) | Param::Color(s)
+            | Param::DcaGroups(s) | Param::MuteGroups(s) | Param::MainAssign(s)
+            | Param::SendLevel(s, _) | Param::SendTap(s, _) => Some(s),
             _ => None,
         }
     }
@@ -205,12 +236,21 @@ impl Param {
             v.push(Param::MuteGroupOn(n));
         }
         v.push(Param::MonitorLevel);
+        v.extend((1..=crate::strip::CHANNELS / 2).map(Param::ChLink));
+        v.extend((1..=BUSES / 2).map(Param::BusLink));
         v.push(Param::SnapIndex);
         for i in 1..=64 {
             v.push(Param::SnapName(i));
         }
         v
     }
+}
+
+/// "3-4" → pair 2.
+fn link_pair(s: &str) -> Option<u8> {
+    let (a, b) = s.split_once('-')?;
+    let (a, b): (u8, u8) = (a.parse().ok()?, b.parse().ok()?);
+    (a % 2 == 1 && b == a + 1).then_some(a.div_ceil(2))
 }
 
 #[cfg(test)]
@@ -228,6 +268,9 @@ mod tests {
         );
         assert_eq!(Param::Gain(1).path(), "/headamp/01/gain");
         assert_eq!(Param::SnapName(2).path(), "/-snap/02/name");
+        assert_eq!(Param::ChLink(2).path(), "/config/chlink/3-4");
+        assert_eq!(Param::parse("/config/buslink/5-6"), Some(Param::BusLink(3)));
+        assert_eq!(Param::parse("/config/chlink/2-3"), None);
     }
 
     #[test]

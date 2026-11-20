@@ -95,10 +95,23 @@ impl Mixer {
     }
 
     /// Set a parameter: updates local state immediately, sends coalesced (latest wins).
+    /// For stereo-linked strips the partner is updated too (the mixer mirrors linked
+    /// faders/mutes itself but does not echo the partner change back to us).
     pub fn set(&self, p: Param, v: Value) {
-        self.shared.state.write().unwrap().values.insert(p, v.clone());
+        let mirror = {
+            let mut st = self.shared.state.write().unwrap();
+            st.values.insert(p, v.clone());
+            let m = p.strip().and_then(|s| st.linked_partner(s)).and_then(|o| p.with_strip(o));
+            if let Some(m) = m {
+                st.values.insert(m, v.clone());
+            }
+            m
+        };
         self.shared.bump();
-        let _ = self.tx.send(Cmd::Set(p, v));
+        let _ = self.tx.send(Cmd::Set(p, v.clone()));
+        if let Some(m) = mirror {
+            let _ = self.tx.send(Cmd::Set(m, v));
+        }
     }
 
     /// Send an arbitrary OSC message (e.g. `/-snap/load`).

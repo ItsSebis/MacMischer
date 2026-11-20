@@ -72,3 +72,20 @@ fn reconnects_after_outage() {
     wait_for("reconnected", 5, || mixer.status() == Status::Connected);
     assert_eq!(mixer.state().name(StripId::Ch(2)), "Changed");
 }
+
+#[test]
+fn linked_pairs_mirror() {
+    let mock = MockMixer::start();
+    let mixer = Mixer::connect_with(mock.addr(), fast());
+    wait_for("connected", 5, || mixer.status() == Status::Connected);
+    let st = mixer.state();
+    assert_eq!(st.linked_partner(StripId::Ch(3)), Some(StripId::Ch(4)));
+    assert_eq!(st.link_leader(StripId::Ch(4)), StripId::Ch(3));
+    assert_eq!(st.linked_partner(StripId::Ch(1)), None);
+    let shown = st.display_strips(&[StripId::Ch(1), StripId::Ch(4), StripId::Ch(3), StripId::Ch(5)]);
+    assert_eq!(shown, vec![StripId::Ch(1), StripId::Ch(3), StripId::Ch(5)]);
+    drop(st);
+    mixer.set(Param::Fader(StripId::Ch(3)), Value::Float(0.5));
+    assert_eq!(mixer.state().fader(StripId::Ch(4)), 0.5);
+    wait_for("partner sent", 2, || mock.get("/ch/04/mix/fader") == Some(Value::Float(0.5)));
+}
