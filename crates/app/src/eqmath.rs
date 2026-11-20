@@ -106,6 +106,7 @@ impl Biquad {
 }
 
 /// Response of a single band in dB at `hz`.
+#[cfg(test)]
 pub fn band_db(b: &Band, hz: f32) -> f32 {
     Biquad::new(b.kind, b.hz as f64, b.gain_db as f64, b.q as f64).db_at(hz as f64) as f32
 }

@@ -1,6 +1,7 @@
 //! Key bindings → actions. Digits/prefix letters are handled by [`crate::input`] first.
 
 use crate::actions::Action;
+use crate::views::DetailView;
 use eframe::egui::{Key, Modifiers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,6 +53,9 @@ impl Default for Keymap {
             (Binding::Char('.'), PanNudge(0.05)),
             (Binding::Char('<'), PanNudge(-0.25)),
             (Binding::Char('>'), PanNudge(0.25)),
+            (Binding::Char('v'), SetView(DetailView::Mix)),
+            (Binding::Char('e'), SetView(DetailView::Eq)),
+            (Binding::Char('c'), SetView(DetailView::Dynamics)),
             (Binding::Char('m'), ToggleMute),
             (Binding::Char('s'), ToggleSolo),
             (Binding::Key(Key::L, CMD), ToggleLock),
@@ -93,6 +97,7 @@ impl Keymap {
             (", .  (< >)", "pan left / right (coarse)"),
             ("0 0", "fader to 0 dB"),
             ("m / s", "mute / solo"),
+            ("v / e / c", "detail: mix + sends / EQ / gate + compressor"),
             ("Tab / Shift+Tab", "next / previous strip in bank"),
             ("[ ]  F1-F12", "previous / next bank, jump to bank"),
             ("Ctrl/Cmd+K", "scenes"),

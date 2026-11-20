@@ -18,6 +18,16 @@ pub struct Ctx<'a> {
     pub ball: &'a mut HashMap<StripId, Ballistics>,
     pub selected: StripId,
     pub actions: &'a mut Vec<Action>,
+    pub view: DetailView,
+}
+
+/// What the detail panel shows for the selected strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DetailView {
+    #[default]
+    Mix,
+    Eq,
+    Dynamics,
 }
 
 impl Ctx<'_> {
@@ -220,8 +230,36 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
                     c.actions.push(Action::SetSolo(s, !soloed));
                 }
             });
+            ui.add_space(6.0);
+            // View tabs (keys: v / e / c)
+            ui.horizontal(|ui| {
+                let has_eq = xair_proto::proc::eq_bands(s) > 0;
+                let has_dyn = xair_proto::proc::has_dyn(s) || xair_proto::proc::has_gate(s);
+                for (v, label, enabled) in [
+                    (DetailView::Mix, "Mix", true),
+                    (DetailView::Eq, "EQ", has_eq),
+                    (DetailView::Dynamics, "Dyn", has_dyn),
+                ] {
+                    let r = ui.add_enabled(enabled, egui::Button::new(label).selected(c.view == v).min_size(Vec2::new(58.0, 22.0)));
+                    if r.clicked() {
+                        c.actions.push(Action::SetView(v));
+                    }
+                }
+            });
         });
         ui.separator();
+
+        match c.view {
+            DetailView::Eq if xair_proto::proc::eq_bands(s) > 0 => {
+                crate::eq_view::eq_view(ui, c, s);
+                return;
+            }
+            DetailView::Dynamics if xair_proto::proc::has_dyn(s) || xair_proto::proc::has_gate(s) => {
+                crate::dyn_view::dyn_view(ui, c, s);
+                return;
+            }
+            _ => {}
+        }
 
         if let StripId::Dca(n) = s {
             dca_members(ui, c, n);

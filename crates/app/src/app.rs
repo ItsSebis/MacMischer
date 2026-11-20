@@ -35,6 +35,7 @@ pub struct App {
     show_help: bool,
     editor: Option<BankEditor>,
     scenes: ScenesUi,
+    view: views::DetailView,
     show_routing: bool,
     /// Lock mode: only mutes, solo, navigation and the main fader respond.
     locked: bool,
@@ -58,6 +59,7 @@ impl App {
             show_help: false,
             editor: None,
             scenes: ScenesUi::default(),
+            view: views::DetailView::Mix,
             show_routing: false,
             locked: false,
             flash: None,
@@ -69,6 +71,8 @@ impl App {
             Ok("dca") => app.selected = StripId::Dca(1),
             Ok("scenes") => app.scenes.open = true,
             Ok("routing") => app.show_routing = true,
+            Ok("eq") => app.view = views::DetailView::Eq,
+            Ok("dyn") => app.view = views::DetailView::Dynamics,
             _ => {}
         }
         if mock {
@@ -236,6 +240,7 @@ impl App {
                 Action::ToggleLock => self.locked = !self.locked,
                 Action::OpenScenes => self.scenes.open = !self.scenes.open,
                 Action::OpenRouting => self.show_routing = !self.show_routing,
+                Action::SetView(v) => self.view = v,
             }
         }
     }
@@ -360,6 +365,7 @@ impl eframe::App for App {
             ball: &mut self.ball,
             selected: self.selected,
             actions: &mut actions,
+            view: self.view,
         };
 
         egui::Panel::top("status").show(ui, |ui| {

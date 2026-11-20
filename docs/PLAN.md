@@ -13,7 +13,7 @@
 - [x] M4 Keyboard + banks (2026-11-20): number entry w/ early commit, keymap, nudges, bank editor (rename/reorder/add/remove/bind to bus), monitor banks, help (?). Keyboard NOT yet tested by user
 - [x] M5 Show files + connection UX (2026-11-20): Show menu (open/new/copy/import banks/rename/open folder), autosave 0.8 s after change + on exit, remembered mixer auto-connect, mixer picker, auto-retry while mixer off, Switch mixer menu
 - [x] M6 Scenes & routing + safety → v1 (2026-11-20): scenes window (recall/save/rename, confirm), routing window (inputs analog/USB, USB sends, aux outs, Ultranet, main read-only), Safe/Simple mode, Lock (Ctrl/Cmd+L), README + cargo-bundle metadata. NOT verified on hardware: snapshot save/recall, routing writes (permission to change mixer routing was denied during probing; inferred enum codes flagged in PROTOCOL.md)
-- [ ] M7+ post-v1
+- [~] M7+ post-v1 — DONE: channel processing (2026-11-20: EQ view with draggable curve + low cut, gate/compressor view with transfer curves; keys v/e/c). OPEN: FX rack, web remote, RTA overlay, undo/A-B, presets, MIDI
 
 ## Context
 Keyboard-first, fast, good-looking desktop app to control a Behringer XR18 (X Air) over the network.
@@ -89,3 +89,4 @@ crates/
 - 2026-11-20: Stereo-linked pairs as wide strips (verified on hardware: 3-4, 5-6, 7-8, 9-10, 15-16, bus 3-4 linked). Next: M5.
 - 2026-11-20: M5 done. Files: shows in data dir (`~/.local/share/macmischer/shows/*.toml`, macOS `~/Library/Application Support/MacMischer/shows`), prefs in config dir (`~/.config/macmischer/prefs.toml`). Keymap is not yet stored in show files (deferred until keymap editing exists). Next: M6 scenes, routing, safety.
 - 2026-11-20: M6 done → v1 feature-complete. Open items before calling v1 released: user test of keyboard, scene recall/save, routing edits on hardware; solo index mapping; build .app on the MacBook. Next: M7 (processing, FX, RTA, undo, MIDI) on user's priority.
+- 2026-11-20: Icon (assets/icon/icon.svg → `cargo run -p icon-gen`). Bank-position numbering default. Channel processing done; hardware-verified scales in PROTOCOL.md. Processing edits not yet exercised on hardware (read-only checks only). Next: user picks between FX rack / web remote / RTA / undo / MIDI.

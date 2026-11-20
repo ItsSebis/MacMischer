@@ -28,6 +28,7 @@ pub enum Action {
     ToggleLock,
     OpenScenes,
     OpenRouting,
+    SetView(crate::views::DetailView),
 }
 
 /// Fader position after moving by `db`, always at least one mixer step in that direction.
@@ -61,7 +62,8 @@ impl Action {
             | Action::SetSolo(..)
             | Action::ToggleLock
             | Action::OpenScenes
-            | Action::OpenRouting => true,
+            | Action::OpenRouting
+            | Action::SetView(_) => true,
             Action::Set(p, _) => matches!(
                 p,
                 Param::On(_) | Param::Solo(_) | Param::MuteGroupOn(_) | Param::Fader(StripId::Main)
