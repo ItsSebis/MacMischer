@@ -8,7 +8,7 @@
 - [x] User approval (2026-11-20)
 - [x] M0 Scaffold (2026-11-20): workspace builds, 3 fader-law tests pass, clippy clean, dark window launches
 - [x] M1 Protocol spike (2026-11-20): see docs/PROTOCOL.md
-- [ ] M2 Core
+- [x] M2 Core (2026-11-20): proto model + xair-core + xair-mock; 4 integration tests; hardware full sync 693 params in ~300 ms, meters 20 Hz
 - [ ] M3 Mixing UI
 - [ ] M4 Keyboard + banks
 - [ ] M5 Show files + connection UX
@@ -74,3 +74,4 @@ crates/
 ## Session log
 - 2026-11-20: planning done, M0 done. Notes: egui/eframe 0.37 API = `App::ui(&mut self, ui, frame)`, `egui::Panel::top(..).show(ui, ..)`; eframe needs `x11`+`wayland` features on Linux with default-features off. Deps: rosc 0.11, toml 1, directories 6. Next: M1 probe CLI against real XR18.
 - 2026-11-20: M1 done — probe CLI (cargo run -p xair-proto --bin xair-probe), findings in PROTOCOL.md. Next: M2 core.
+- 2026-11-20: M2 done. Learned: Wi-Fi drops packets on query bursts → sliding-window sync (24 in flight, 250 ms retry ×3); headamp 17/18 have no phantom; DCA/LR have config/name+color. Hardware check: `cargo run -p xair-core --example sync_check -- 10.5.5.48` (read-only). Next: M3 mixing UI.

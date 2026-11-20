@@ -3904,7 +3904,9 @@ name = "xair-core"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "rosc",
  "tracing",
+ "xair-mock",
  "xair-proto",
 ]
 
@@ -3912,6 +3914,7 @@ dependencies = [
 name = "xair-mock"
 version = "0.1.0"
 dependencies = [
+ "rosc",
  "xair-proto",
 ]
 

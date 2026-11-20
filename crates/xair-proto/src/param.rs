@@ -181,7 +181,9 @@ impl Param {
         }
         for h in 1..=18 {
             v.push(Param::Gain(h));
-            v.push(Param::Phantom(h));
+            if h <= 16 {
+                v.push(Param::Phantom(h)); // aux in 17/18 has no phantom
+            }
         }
         v.push(Param::SnapIndex);
         for i in 1..=64 {
