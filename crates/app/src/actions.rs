@@ -21,6 +21,13 @@ pub enum Action {
     BankStep(i32),
     /// Select next/previous strip within the current bank.
     StripStep(i32),
+    RecallScene(u8),
+    /// Save the current mix into a slot with this name.
+    SaveScene(u8, String),
+    RenameScene(u8, String),
+    ToggleLock,
+    OpenScenes,
+    OpenRouting,
 }
 
 /// Fader position after moving by `db`, always at least one mixer step in that direction.
@@ -40,10 +47,49 @@ pub fn nudge_fader(f: f32, db: f32) -> f32 {
     q.clamp(0.0, 1.0)
 }
 
+impl Action {
+    /// Allowed while the console is locked: navigation, mutes/solo, the main fader.
+    pub fn allowed_when_locked(&self, selected: StripId) -> bool {
+        match self {
+            Action::Select(_)
+            | Action::SelectPosition(_)
+            | Action::SelectBank(_)
+            | Action::BankStep(_)
+            | Action::StripStep(_)
+            | Action::ToggleMute
+            | Action::ToggleSolo
+            | Action::SetSolo(..)
+            | Action::ToggleLock
+            | Action::OpenScenes
+            | Action::OpenRouting => true,
+            Action::Set(p, _) => matches!(
+                p,
+                Param::On(_) | Param::Solo(_) | Param::MuteGroupOn(_) | Param::Fader(StripId::Main)
+            ),
+            Action::Nudge(_) | Action::Unity => selected == StripId::Main,
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use xair_proto::fader::to_db;
+
+    #[test]
+    fn lock_filter() {
+        use xair_proto::Value;
+        let ch = StripId::Ch(1);
+        assert!(Action::ToggleMute.allowed_when_locked(ch));
+        assert!(Action::Set(Param::On(ch), Value::Int(0)).allowed_when_locked(ch));
+        assert!(Action::Set(Param::Fader(StripId::Main), Value::Float(0.5)).allowed_when_locked(ch));
+        assert!(!Action::Set(Param::Fader(ch), Value::Float(0.5)).allowed_when_locked(ch));
+        assert!(!Action::Nudge(1.0).allowed_when_locked(ch));
+        assert!(Action::Nudge(1.0).allowed_when_locked(StripId::Main));
+        assert!(!Action::RecallScene(2).allowed_when_locked(ch));
+        assert!(!Action::PanNudge(0.1).allowed_when_locked(ch));
+    }
 
     #[test]
     fn nudges() {

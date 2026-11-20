@@ -10,6 +10,8 @@ mod connect;
 mod input;
 mod keymap;
 mod prefs;
+mod scenes;
+mod routing_view;
 mod session;
 mod show;
 mod theme;

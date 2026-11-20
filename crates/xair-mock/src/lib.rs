@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use xair_proto::fader::to_db;
 use xair_proto::osc::{decode, encode, from_osc, to_osc};
 use xair_proto::strip::StripId;
-use xair_proto::{meters, Param, Value};
+use xair_proto::{meters, routing, Param, Value};
 
 const SUB_TTL: Duration = Duration::from_secs(10);
 const METER_PERIOD: Duration = Duration::from_millis(50);
@@ -65,6 +65,20 @@ fn default_for(p: Param) -> Value {
         Param::SendTap(..) => Value::Int(4),
         Param::Gain(_) => Value::Float(0.5),
         Param::Phantom(_) | Param::Solo(_) => Value::Int(0),
+        Param::InSrc(StripId::Ch(n)) => Value::Int(n as i32 - 1),
+        Param::InSrc(_) => Value::Int(0),
+        Param::RtnSrc(StripId::Ch(16)) => Value::Int(1),
+        Param::RtnSrc(_) | Param::RtnSw(_) => Value::Int(0),
+        Param::RouteSrc(o) => Value::Int(match o {
+            routing::Output::Main(n) => n as i32 - 1,
+            routing::Output::Aux(n) => 25 + n as i32,
+            routing::Output::Usb(n) | routing::Output::P16(n) => n as i32 - 1,
+        }),
+        Param::RoutePos(o) => Value::Int(match o {
+            routing::Output::Aux(_) => 10,
+            routing::Output::P16(_) => 3,
+            _ => 0,
+        }),
         Param::SnapIndex => Value::Int(1),
         Param::SnapName(1) => Value::Str("Home".into()),
         Param::SnapName(_) => Value::Str(String::new()),

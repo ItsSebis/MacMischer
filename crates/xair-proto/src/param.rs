@@ -1,5 +1,6 @@
 //! Typed mixer parameters <-> OSC address paths.
 
+use crate::routing::Output;
 use crate::strip::{StripId, BUSES, FX};
 
 /// A value as carried over OSC.
@@ -107,6 +108,16 @@ pub enum Param {
     SnapIndex,
     /// string snapshot name 1..64
     SnapName(u8),
+    /// int 0..15 analog input In01..In16 (channels only)
+    InSrc(StripId),
+    /// int 0..17 USB return U01..U18 (channels); 0..8 USB pair U01-02..U17-18 (aux in)
+    RtnSrc(StripId),
+    /// int 0 = analog input, 1 = USB return (channels and aux in)
+    RtnSw(StripId),
+    /// int source code, see `routing::source_label`
+    RouteSrc(Output),
+    /// int tap code, see `routing::tap_label` (outputs with `has_pos`)
+    RoutePos(Output),
 }
 
 impl Param {
@@ -133,6 +144,11 @@ impl Param {
             Param::Solo(i) => format!("/-stat/solosw/{i:02}"),
             Param::SnapIndex => "/-snap/index".into(),
             Param::SnapName(i) => format!("/-snap/{i:02}/name"),
+            Param::InSrc(s) => format!("{}/config/insrc", s.prefix()),
+            Param::RtnSrc(s) => format!("{}/config/rtnsrc", s.prefix()),
+            Param::RtnSw(s) => format!("{}/preamp/rtnsw", s.prefix()),
+            Param::RouteSrc(o) => format!("{}/src", o.prefix()),
+            Param::RoutePos(o) => format!("{}/pos", o.prefix()),
         }
     }
 
@@ -150,6 +166,13 @@ impl Param {
                 "/grp/dca" => Some(Param::DcaGroups(strip)),
                 "/grp/mute" => Some(Param::MuteGroups(strip)),
                 "/mix/lr" => Some(Param::MainAssign(strip)),
+                "/config/insrc" if matches!(strip, StripId::Ch(_)) => Some(Param::InSrc(strip)),
+                "/config/rtnsrc" if matches!(strip, StripId::Ch(_) | StripId::AuxIn) => {
+                    Some(Param::RtnSrc(strip))
+                }
+                "/preamp/rtnsw" if matches!(strip, StripId::Ch(_) | StripId::AuxIn) => {
+                    Some(Param::RtnSw(strip))
+                }
                 _ => {
                     let r = rest.strip_prefix("/mix/")?;
                     let (idx, leaf) = r.split_once('/')?;
@@ -173,6 +196,14 @@ impl Param {
             ["", "config", "chlink", pair] => Some(Param::ChLink(link_pair(pair)?)),
             ["", "config", "buslink", pair] => Some(Param::BusLink(link_pair(pair)?)),
             ["", "-snap", n, "name"] => Some(Param::SnapName(n.parse().ok()?)),
+            ["", "routing", kind, n, leaf] => {
+                let o = Output::parse_prefix(kind, n)?;
+                match *leaf {
+                    "src" => Some(Param::RouteSrc(o)),
+                    "pos" if o.has_pos() => Some(Param::RoutePos(o)),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
@@ -238,6 +269,21 @@ impl Param {
         v.push(Param::MonitorLevel);
         v.extend((1..=crate::strip::CHANNELS / 2).map(Param::ChLink));
         v.extend((1..=BUSES / 2).map(Param::BusLink));
+        for c in 1..=crate::strip::CHANNELS {
+            v.push(Param::InSrc(StripId::Ch(c)));
+            v.push(Param::RtnSrc(StripId::Ch(c)));
+            v.push(Param::RtnSw(StripId::Ch(c)));
+        }
+        v.push(Param::RtnSrc(StripId::AuxIn));
+        v.push(Param::RtnSw(StripId::AuxIn));
+        for o in [Output::Main(1), Output::Aux(1), Output::Usb(1), Output::P16(1)] {
+            for o in o.all_of_kind() {
+                v.push(Param::RouteSrc(o));
+                if o.has_pos() {
+                    v.push(Param::RoutePos(o));
+                }
+            }
+        }
         v.push(Param::SnapIndex);
         for i in 1..=64 {
             v.push(Param::SnapName(i));
@@ -271,6 +317,12 @@ mod tests {
         assert_eq!(Param::ChLink(2).path(), "/config/chlink/3-4");
         assert_eq!(Param::parse("/config/buslink/5-6"), Some(Param::BusLink(3)));
         assert_eq!(Param::parse("/config/chlink/2-3"), None);
+        assert_eq!(Param::InSrc(StripId::Ch(5)).path(), "/ch/05/config/insrc");
+        assert_eq!(Param::RtnSw(StripId::AuxIn).path(), "/rtn/aux/preamp/rtnsw");
+        assert_eq!(Param::RouteSrc(Output::Usb(3)).path(), "/routing/usb/03/src");
+        assert_eq!(Param::parse("/routing/main/01/pos"), None);
+        assert_eq!(Param::parse("/routing/aux/06/pos"), Some(Param::RoutePos(Output::Aux(6))));
+        assert_eq!(Param::parse("/rtn/aux/config/insrc"), None);
     }
 
     #[test]

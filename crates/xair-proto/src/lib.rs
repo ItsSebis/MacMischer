@@ -4,6 +4,7 @@ pub mod fader;
 pub mod meters;
 pub mod osc;
 pub mod param;
+pub mod routing;
 pub mod strip;
 
 pub use param::{Param, SendTo, Value};

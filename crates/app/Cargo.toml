@@ -17,3 +17,11 @@ directories.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+
+# macOS .app bundle: `cargo install cargo-bundle && cargo bundle --release -p macmischer`
+[package.metadata.bundle]
+name = "MacMischer"
+identifier = "de.adiwidjaja.macmischer"
+category = "public.app-category.music"
+short_description = "Keyboard-first controller for Behringer X Air mixers"
+osx_minimum_system_version = "11.0"

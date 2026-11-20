@@ -13,6 +13,8 @@ pub struct Prefs {
     pub last_mixer: Option<String>,
     pub last_show: Option<PathBuf>,
     pub recent_shows: Vec<PathBuf>,
+    /// Safe mode: scene recall needs confirmation (Simple mode when false).
+    pub safe_mode: bool,
 }
 
 impl Prefs {

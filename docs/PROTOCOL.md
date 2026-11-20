@@ -48,6 +48,16 @@ Verified on XR18V2 "SEBIS-XR18", firmware 1.19, IP 10.5.5.48, UDP port 10024 (M1
 | `/routing/usb/01/src` | `i:0` |
 | `/routing/p16/01` | `i:0 i:3` |
 
+#### Routing parameters (fw 1.19)
+
+Typed per-address reads/writes (single value each):
+
+- Channel input (verified): `/ch/NN/preamp/rtnsw` 0 = analog, 1 = USB return; `/ch/NN/config/insrc` 0..15 = In01..In16; `/ch/NN/config/rtnsrc` 0..17 = U01..U18.
+- Aux in (verified): `/rtn/aux/preamp/rtnsw` 0/1; `/rtn/aux/config/rtnsrc` 0..8 = USB pairs U01-02..U17-18. No `insrc`.
+- Outputs: `/routing/{aux/01..06, usb/01..18, p16/01..16}/{src,pos}`; `/routing/main/01..02/src` (no pos; main/01 = 0 "LR", main/02 = 1 "MON").
+- Source codes: verified 0..17 (Ch01..Ch16, AuxL, AuxR) and 26..31 (Bus1..6). Inferred: 18..25 FX1L..FX4R, 32..35 Send1..4, 36/37 L/R, 38..55 U01..U18.
+- Tap (`pos`) codes: verified 0 AIN, 3 IN+M, 10 POST. Inferred: 1 AIN+M, 2 IN, 4 PREEQ, 5 PREEQ+M, 6 POSTEQ, 7 POSTEQ+M, 8 PRE, 9 PRE+M.
+
 ## `/node` bulk read
 
 - Request: `/node ,s "<path without leading slash>"`, e.g. `ch/01/mix`.

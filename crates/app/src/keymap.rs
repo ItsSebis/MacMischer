@@ -28,6 +28,7 @@ impl From<Modifiers> for Mods {
 const NONE: Mods = Mods { shift: false, alt: false, cmd: false };
 const SHIFT: Mods = Mods { shift: true, alt: false, cmd: false };
 const ALT: Mods = Mods { shift: false, alt: true, cmd: false };
+const CMD: Mods = Mods { shift: false, alt: false, cmd: true };
 
 pub struct Keymap {
     bindings: Vec<(Binding, Action)>,
@@ -53,6 +54,9 @@ impl Default for Keymap {
             (Binding::Char('>'), PanNudge(0.25)),
             (Binding::Char('m'), ToggleMute),
             (Binding::Char('s'), ToggleSolo),
+            (Binding::Key(Key::L, CMD), ToggleLock),
+            (Binding::Key(Key::K, CMD), OpenScenes),
+            (Binding::Key(Key::R, CMD), OpenRouting),
             (Binding::Char('['), BankStep(-1)),
             (Binding::Char(']'), BankStep(1)),
         ];
@@ -91,6 +95,9 @@ impl Keymap {
             ("m / s", "mute / solo"),
             ("Tab / Shift+Tab", "next / previous strip in bank"),
             ("[ ]  F1-F12", "previous / next bank, jump to bank"),
+            ("Ctrl/Cmd+K", "scenes"),
+            ("Ctrl/Cmd+R", "routing"),
+            ("Ctrl/Cmd+L", "lock / unlock (only mutes + main fader work)"),
             ("Esc", "cancel number entry"),
             ("?", "show / hide this help"),
         ]

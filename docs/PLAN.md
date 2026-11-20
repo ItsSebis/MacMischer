@@ -12,7 +12,7 @@
 - [x] M3 Mixing UI (2026-11-20): strips, meter bridge, detail panel (gain/+48V/pan/sends), Main strip fixed right, bank tabs; verified on hardware (read-only)
 - [x] M4 Keyboard + banks (2026-11-20): number entry w/ early commit, keymap, nudges, bank editor (rename/reorder/add/remove/bind to bus), monitor banks, help (?). Keyboard NOT yet tested by user
 - [x] M5 Show files + connection UX (2026-11-20): Show menu (open/new/copy/import banks/rename/open folder), autosave 0.8 s after change + on exit, remembered mixer auto-connect, mixer picker, auto-retry while mixer off, Switch mixer menu
-- [ ] M6 Scenes & routing + safety → v1
+- [x] M6 Scenes & routing + safety → v1 (2026-11-20): scenes window (recall/save/rename, confirm), routing window (inputs analog/USB, USB sends, aux outs, Ultranet, main read-only), Safe/Simple mode, Lock (Ctrl/Cmd+L), README + cargo-bundle metadata. NOT verified on hardware: snapshot save/recall, routing writes (permission to change mixer routing was denied during probing; inferred enum codes flagged in PROTOCOL.md)
 - [ ] M7+ post-v1
 
 ## Context
@@ -84,3 +84,4 @@ crates/
 - 2026-11-20: Buses + FX sends have grp/dca + grp/mute (verified); LR has none. Added mute-group membership + 4 mute-group masters (/config/mute/N) and phones/monitor level (/config/solo/level) in right column. Not yet handled: channel/bus stereo links (/config/chlink/1-2, /config/buslink/1-2).
 - 2026-11-20: Stereo-linked pairs as wide strips (verified on hardware: 3-4, 5-6, 7-8, 9-10, 15-16, bus 3-4 linked). Next: M5.
 - 2026-11-20: M5 done. Files: shows in data dir (`~/.local/share/macmischer/shows/*.toml`, macOS `~/Library/Application Support/MacMischer/shows`), prefs in config dir (`~/.config/macmischer/prefs.toml`). Keymap is not yet stored in show files (deferred until keymap editing exists). Next: M6 scenes, routing, safety.
+- 2026-11-20: M6 done → v1 feature-complete. Open items before calling v1 released: user test of keyboard, scene recall/save, routing edits on hardware; solo index mapping; build .app on the MacBook. Next: M7 (processing, FX, RTA, undo, MIDI) on user's priority.

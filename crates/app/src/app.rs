@@ -3,6 +3,7 @@
 use crate::actions::{nudge_fader, Action};
 use crate::bank_editor::BankEditor;
 use crate::banks::Bank;
+use crate::scenes::ScenesUi;
 use crate::session::Session;
 use crate::input::{Entry, NumberEntry};
 use crate::keymap::{Binding, Keymap};
@@ -33,6 +34,12 @@ pub struct App {
     keymap: Keymap,
     show_help: bool,
     editor: Option<BankEditor>,
+    scenes: ScenesUi,
+    show_routing: bool,
+    /// Lock mode: only mutes, solo, navigation and the main fader respond.
+    locked: bool,
+    /// Short status message (e.g. "Locked").
+    flash: Option<(String, Instant)>,
 }
 
 impl App {
@@ -50,12 +57,18 @@ impl App {
             keymap: Keymap::default(),
             show_help: false,
             editor: None,
+            scenes: ScenesUi::default(),
+            show_routing: false,
+            locked: false,
+            flash: None,
         };
-        // Dev aid for screenshots: MM_SHOW=editor|help opens that dialog on start.
+        // Dev aid for screenshots: MM_SHOW=editor|help|dca|scenes|routing opens that dialog on start.
         match std::env::var("MM_SHOW").as_deref() {
             Ok("editor") => app.editor = Some(BankEditor::open(0, &app.session.banks[0])),
             Ok("help") => app.show_help = true,
             Ok("dca") => app.selected = StripId::Dca(1),
+            Ok("scenes") => app.scenes.open = true,
+            Ok("routing") => app.show_routing = true,
             _ => {}
         }
         if mock {
@@ -154,6 +167,10 @@ impl App {
         let Conn::Mixer(m) = &self.conn else { return };
         for a in actions {
             let s = self.selected;
+            if self.locked && !a.allowed_when_locked(s) {
+                self.flash = Some(("Locked — Ctrl/Cmd+L to unlock".into(), Instant::now()));
+                continue;
+            }
             match a {
                 Action::Set(p, v) => m.set(p, v),
                 Action::Select(s) => self.selected = m.state().link_leader(s),
@@ -206,6 +223,19 @@ impl App {
                     set_solo(m, s, !on);
                 }
                 Action::SetSolo(s, on) => set_solo(m, s, on),
+                Action::RecallScene(i) => {
+                    m.load_snapshot(i);
+                    self.flash = Some((format!("Recalled scene {i}"), Instant::now()));
+                }
+                Action::SaveScene(i, name) => {
+                    m.save_snapshot(i);
+                    m.set(Param::SnapName(i), Value::Str(name));
+                    self.flash = Some((format!("Saved scene {i}"), Instant::now()));
+                }
+                Action::RenameScene(i, name) => m.set(Param::SnapName(i), Value::Str(name)),
+                Action::ToggleLock => self.locked = !self.locked,
+                Action::OpenScenes => self.scenes.open = !self.scenes.open,
+                Action::OpenRouting => self.show_routing = !self.show_routing,
             }
         }
     }
@@ -317,6 +347,8 @@ impl eframe::App for App {
         egui::Panel::bottom("banks").exact_size(40.0).show(ui, |ui| self.bank_tabs(ui, &mut actions));
 
         let mut switch = false;
+        let mut prefs_changed = false;
+        let locked = self.locked;
         let Conn::Mixer(mixer) = &self.conn else { unreachable!() };
         let status = mixer.status();
         let st_guard = mixer.state();
@@ -357,9 +389,35 @@ impl eframe::App for App {
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Lock + mode
+                    let lock_txt = if locked {
+                        egui::RichText::new(" LOCKED ").strong().color(egui::Color32::BLACK).background_color(theme::MUTE)
+                    } else {
+                        egui::RichText::new("Lock")
+                    };
+                    if ui.button(lock_txt).on_hover_text("Ctrl/Cmd+L — only mutes and the main fader work while locked").clicked() {
+                        c.actions.push(Action::ToggleLock);
+                    }
+                    let safe = &mut self.session.prefs.safe_mode;
+                    let before = *safe;
+                    ui.selectable_value(safe, true, "Safe").on_hover_text("Scene recall needs a confirming second click");
+                    ui.selectable_value(safe, false, "Simple").on_hover_text("No confirmations");
+                    if *safe != before {
+                        prefs_changed = true;
+                    }
+                    ui.separator();
+                    if ui.button("Routing").on_hover_text("Ctrl/Cmd+R").clicked() {
+                        c.actions.push(Action::OpenRouting);
+                    }
                     let idx = st.snap_index();
-                    if idx > 0 {
-                        ui.label(format!("Scene {idx}: {}", st.snap_name(idx as u8)));
+                    let scene = if idx > 0 { format!("Scene {idx}: {}", st.snap_name(idx as u8)) } else { "Scenes".into() };
+                    if ui.button(scene).on_hover_text("Ctrl/Cmd+K").clicked() {
+                        c.actions.push(Action::OpenScenes);
+                    }
+                    if let Some((msg, t)) = &self.flash {
+                        if t.elapsed() < Duration::from_secs(2) {
+                            ui.colored_label(theme::WARN, msg);
+                        }
                     }
                     if let Some(t) = bank.bus {
                         let dest = t.strip();
@@ -404,6 +462,9 @@ impl eframe::App for App {
             });
         });
         let names: HashMap<StripId, String> = StripId::all().into_iter().map(|s| (s, st.name(s))).collect();
+        let st_for_windows = st;
+        self.scenes.window(&ctx, st_for_windows, self.session.prefs.safe_mode, &mut actions);
+        crate::routing_view::routing_window(&ctx, &mut self.show_routing, st_for_windows, self.locked, &mut actions);
         drop(st_guard);
 
         if let Some(ed) = &mut self.editor {
@@ -418,6 +479,9 @@ impl eframe::App for App {
         self.apply(actions);
         if switch {
             self.switch_mixer();
+        }
+        if prefs_changed {
+            self.session.prefs.save();
         }
         self.session.autosave(&ctx);
         // Keep meters animating smoothly between network packets.
