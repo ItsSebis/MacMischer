@@ -1,0 +1,10 @@
+{
+  "name": "MacMischer Remote",
+  "short_name": "Mixer",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#16171a",
+  "theme_color": "#16171a",
+  "icons": [{ "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }]
+}

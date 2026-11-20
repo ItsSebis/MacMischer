@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/xair-proto", "crates/xair-core", "crates/xair-mock", "crates/app", "tools/icon-gen"]
+members = ["crates/xair-proto", "crates/xair-core", "crates/xair-mock", "crates/app", "crates/xair-remote", "tools/icon-gen"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ license = "MIT"
 xair-proto = { path = "crates/xair-proto" }
 xair-core = { path = "crates/xair-core" }
 xair-mock = { path = "crates/xair-mock" }
+xair-remote = { path = "crates/xair-remote" }
 rosc = "0.11"
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }

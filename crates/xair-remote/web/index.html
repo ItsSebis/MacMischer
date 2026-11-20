@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mixer Remote</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mixer">
+<meta name="theme-color" content="#16171a">
+<link rel="apple-touch-icon" href="/icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<style>
+:root{--bg:#16171a;--panel:#202226;--text:#e6e6e6;--dim:#8a8d93;--accent:#4cc2ff;--mute:#ff5555;
+  --g:#3dd66b;--y:#f2c94c;--r:#ff4d4d;--line:#33363c}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:var(--bg);color:var(--text);
+  font:16px/1.25 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;touch-action:manipulation}
+button{font:inherit;color:inherit;border:0;background:var(--panel);border-radius:12px;cursor:pointer}
+#app{display:flex;flex-direction:column;height:100%;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+header{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+#title{flex:1;min-width:0;background:none;text-align:left;font-weight:600;font-size:18px;padding:6px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#title.pick::after{content:" \25BE";color:var(--dim)}
+#mixer{color:var(--dim);font-size:13px;white-space:nowrap}
+#status{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px;white-space:nowrap}
+#dot{width:10px;height:10px;border-radius:50%;background:var(--dim)}
+#dot.ok{background:var(--g)}#dot.warn{background:var(--y)}#dot.bad{background:var(--r)}
+.banner{flex:none;text-align:center;padding:6px 10px;font-size:14px;background:#2a2d33;color:var(--text)}
+.banner.err{background:#5a2323}.banner.bus{background:#173246;color:var(--accent)}
+main{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+.center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;color:var(--dim);text-align:center}
+/* page picker */
+#picker{width:min(480px,100%);display:flex;flex-direction:column;gap:12px;overflow-y:auto;max-height:100%;touch-action:pan-y}
+#picker button{padding:22px 16px;font-size:20px;font-weight:600}
+#picker button:active{background:#2b3038}
+/* PIN pad */
+#pin .dots{display:flex;gap:10px;height:22px}
+#pin .dots i{width:14px;height:14px;border-radius:50%;border:2px solid var(--dim)}#pin .dots i.on{background:var(--accent);border-color:var(--accent)}
+#pad{display:grid;grid-template-columns:repeat(3,76px);gap:12px}
+#pad button{height:64px;font-size:26px}#pad button:active{background:#2b3038}
+#pad .go{background:var(--accent);color:#04202e;font-weight:700;font-size:20px}
+#pin.shake #pad,#pin.shake .dots{animation:shake .4s}
+@keyframes shake{20%,60%{transform:translateX(-10px)}40%,80%{transform:translateX(10px)}}
+/* strips */
+#strips{flex:1;min-height:0;display:flex;gap:8px;padding:10px;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x proximity;touch-action:pan-x;
+  -webkit-overflow-scrolling:touch}
+#strips.off .strip{opacity:.4;pointer-events:none}
+.strip{flex:1 0 92px;max-width:150px;min-width:92px;margin:0 auto;scroll-snap-align:start;display:flex;flex-direction:column;gap:8px;
+  background:var(--panel);border-radius:14px;padding:8px;min-height:0}
+.tag{padding:6px 4px;border-radius:8px;text-align:center;font-weight:600;font-size:14px;color:#0b0b0d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db{text-align:center;font-variant-numeric:tabular-nums;font-size:17px;font-weight:600}
+.db small{color:var(--dim);font-weight:400;font-size:12px}
+.row{flex:1;min-height:120px;display:flex;gap:8px;justify-content:center}
+.fader{position:relative;flex:1;max-width:70px;touch-action:none;outline:none;cursor:grab}
+.fader .rail{position:absolute;left:50%;top:14px;bottom:14px;width:6px;margin-left:-3px;background:#0e0f11;border-radius:3px}
+.fader .fill{position:absolute;left:0;right:0;bottom:0;height:100%;background:var(--accent);border-radius:3px;transform-origin:bottom;opacity:.55}
+.fader .cap{position:absolute;left:4px;right:4px;height:2px;background:var(--mute)}
+.fader .thumb{position:absolute;left:0;right:0;top:0;height:30px;margin-top:-15px;background:#d8dade;border-radius:8px;border:2px solid #fff;
+  box-shadow:0 2px 6px #0008;display:flex;align-items:center;justify-content:center}
+.fader .thumb::after{content:"";width:70%;height:2px;background:#222}
+.fader.drag .thumb{background:var(--accent);border-color:var(--accent)}
+.meter{position:relative;width:12px;margin:14px 0;background:#0e0f11;border-radius:3px;overflow:hidden}
+.meter .bar{position:absolute;inset:0;transform-origin:bottom;transform:scaleY(0);background:var(--g);will-change:transform}
+.meter .bar.y{background:var(--y)}.meter .bar.r{background:var(--r)}
+.meter .peak{position:absolute;left:0;right:0;top:0;height:2px;background:#fff;opacity:0;will-change:transform}
+.mute{padding:14px 4px;font-weight:700;font-size:15px}
+.mute.on{background:var(--mute);color:#fff}
+.hint{font-size:11px;color:var(--dim);text-align:center;margin-top:-4px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button id="title" aria-label="Choose page">Mixer Remote</button>
+    <span id="mixer"></span>
+    <span id="status"><span id="dot"></span><span id="stext">Connecting…</span></span>
+  </header>
+  <div id="banner" class="banner hidden" role="status"></div>
+  <main id="main"></main>
+</div>
+<script>
+"use strict";
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+const store = {
+  get(s, k) { try { return s.getItem(k); } catch (_) { return null; } },
+  set(s, k, v) { try { s.setItem(k, v); } catch (_) {} },
+  del(s, k) { try { s.removeItem(k); } catch (_) {} },
+};
+/* Fader law: raw position 0..1 -> dB string (server's `db` is authoritative when not dragging). */
+function lawDb(v) {
+  if (v <= 0) return "-∞";
+  const d = v >= 0.5 ? 40 * v - 30 : v >= 0.25 ? 80 * v - 50 : v >= 0.0625 ? 160 * v - 70 : 480 * v - 90;
+  return (d > 0 ? "+" : "") + d.toFixed(1);
+}
+const fmtDb = s => (s === "-inf" || s === "-Infinity") ? "-∞" : (/^\d/.test(s) && parseFloat(s) > 0 ? "+" + s : s);
+
+/* ---------- app state ---------- */
+let ws = null, backoff = 500, retryTimer = null, failures = 0;
+let mixerName = "", needPin = false, pin = store.get(sessionStorage, "pin") || "";
+let pages = [], pageIdx = null;          // pageIdx: index currently shown/subscribed (null = picker)
+let wantName = store.get(localStorage, "page");  // last chosen page name
+let page = null;                         // {name,bus,max,strips} from `page` message
+let gotState = false, connected = true;
+let ui = {};                             // id -> {root, fader, thumb, fill, db, mute, bar, peak, value, muted, dragging, lastSent}
+let meters = {};                         // id -> {lvl, peak, peakT}
+
+/* ---------- header / banner ---------- */
+function setStatus(kind, text) { $("dot").className = kind; $("stext").textContent = text; }
+function setBanner(text, cls) { const b = $("banner"); b.textContent = text || ""; b.className = "banner " + (cls || "") + (text ? "" : " hidden"); }
+function updateHeader() {
+  const t = $("title");
+  t.textContent = page && pageIdx != null ? page.name : "Mixer Remote";
+  t.classList.toggle("pick", pages.length > 1 && pageIdx != null);
+  $("mixer").textContent = mixerName;
+}
+$("title").onclick = () => { if (pages.length > 1 && pageIdx != null) { pageIdx = null; page = null; ui = {}; showPicker(); } };
+
+/* ---------- views ---------- */
+function view(node) { const m = $("main"); m.replaceChildren(node); }
+function message(text) { const c = el("div", "center", text); view(c); }
+function showPicker() {
+  setBanner(""); updateHeader();
+  const box = el("div", "center"), list = el("div"); list.id = "picker";
+  pages.forEach((p, i) => {
+    const b = el("button", null, p.name); b.setAttribute("aria-label", "Open " + p.name);
+    b.onclick = () => openPage(i, true); list.appendChild(b);
+  });
+  box.appendChild(list); view(box);
+}
+function showPin(wrong) {
+  setBanner(""); updateHeader();
+  const box = el("div", "center"); box.id = "pin";
+  const dots = el("div", "dots"), pad = el("div"); pad.id = "pad";
+  let val = "";
+  const draw = () => { dots.replaceChildren(); for (let i = 0; i < Math.max(4, val.length); i++) dots.appendChild(el("i", i < val.length ? "on" : "")); };
+  const key = (label, aria, fn, cls) => { const b = el("button", cls, label); b.setAttribute("aria-label", aria); b.onclick = fn; pad.appendChild(b); };
+  for (const d of "123456789") key(d, "Digit " + d, () => { if (val.length < 12) { val += d; draw(); } });
+  key("⌫", "Delete", () => { val = val.slice(0, -1); draw(); });
+  key("0", "Digit 0", () => { if (val.length < 12) { val += "0"; draw(); } });
+  key("OK", "Submit PIN", () => { if (!val) return; pin = val; store.set(sessionStorage, "pin", pin); send({ t: "auth", pin }); });
+  pad.lastChild.classList.add("go");
+  box.append(el("div", null, wrong ? "Wrong PIN, try again" : "Enter PIN"), dots, pad);
+  draw(); view(box);
+  if (wrong) { box.classList.add("shake"); setTimeout(() => box.classList.remove("shake"), 450); }
+}
+
+/* ---------- page view ---------- */
+function buildStrips() {
+  ui = {}; meters = {};
+  const wrap = el("div"); wrap.id = "strips";
+  const showMeters = page.meters !== false;
+  for (const s of page.strips) {
+    const root = el("div", "strip");
+    const tag = el("div", "tag", s.name || s.id); tag.style.background = s.color || "#888";
+    const db = el("div", "db"); 
+    const row = el("div", "row");
+    const fader = el("div", "fader"); fader.setAttribute("role", "slider"); fader.tabIndex = 0;
+    fader.setAttribute("aria-label", (s.name || s.id) + " level"); fader.setAttribute("aria-valuemin", "-90"); fader.setAttribute("aria-valuemax", "10");
+    const rail = el("div", "rail"), fill = el("div", "fill"), cap = el("div", "cap"), thumb = el("div", "thumb");
+    rail.appendChild(fill); fader.append(rail, cap, thumb); row.appendChild(fader);
+    const u = { root, fader, thumb, fill, cap, db, value: 0, muted: false, dragging: false, lastSent: -1 };
+    if (showMeters) {
+      const m = el("div", "meter"), bar = el("div", "bar"), peak = el("div", "peak");
+      m.append(bar, peak); row.appendChild(m); u.bar = bar; u.peak = peak; u.meterBox = m;
+    }
+    const mute = el("button", "mute", page.bus ? "Mute ch" : "Mute");
+    mute.setAttribute("aria-label", "Mute " + (s.name || s.id)); mute.setAttribute("aria-pressed", "false");
+    mute.onclick = () => { u.muted = !u.muted; paintMute(u); send({ t: "mute", strip: s.id, muted: u.muted }); u.muteTouched = Date.now(); };
+    u.mute = mute; root.append(tag, db, row, mute);
+    if (page.bus) root.appendChild(el("div", "hint", "affects everyone"));
+    wrap.appendChild(root); ui[s.id] = u;
+    attachFader(s.id, u);
+  }
+  view(wrap); applyEnabled();
+  requestAnimationFrame(() => Object.keys(ui).forEach(id => paintFader(ui[id])));
+}
+function paintMute(u) { u.mute.classList.toggle("on", u.muted); u.mute.setAttribute("aria-pressed", u.muted); }
+function trackBox(u) { const r = u.fader.getBoundingClientRect(); return { top: r.top + 14, h: Math.max(1, r.height - 28), H: r.height }; }
+/* Position thumb/fill/cap and dB text from u.value (raw 0..1). */
+function paintFader(u, dbText) {
+  const b = trackBox(u), max = page ? page.max : 1;
+  u.thumb.style.transform = `translateY(${14 + b.h * (1 - u.value)}px)`;
+  u.fill.style.transform = `scaleY(${u.value})`;
+  u.cap.style.top = (14 + b.h * (1 - max) - 1) + "px";
+  const txt = dbText != null ? dbText : lawDb(u.value);
+  u.db.replaceChildren(document.createTextNode(txt), el("small", null, " dB"));
+  u.fader.setAttribute("aria-valuenow", txt === "-∞" ? "-90" : txt);
+  u.fader.setAttribute("aria-valuetext", txt + " dB");
+}
+/* Relative-drag fader: movement is measured from the touch start, never jumps to the finger. */
+function attachFader(id, u) {
+  let startY = 0, startV = 0, pending = false;
+  const flush = () => { pending = false; if (u.value !== u.lastSent) { u.lastSent = u.value; send({ t: "level", strip: id, value: u.value }); } };
+  const setFromY = y => {
+    const v = startV + (startY - y) / trackBox(u).h;
+    u.value = Math.min(page.max, Math.max(0, v));
+    paintFader(u);
+    if (!pending) { pending = true; requestAnimationFrame(flush); }   // at most one send per frame
+  };
+  u.fader.addEventListener("pointerdown", e => {
+    if (u.dragging) return;
+    e.preventDefault(); u.dragging = true; u.pid = e.pointerId; u.fader.setPointerCapture(e.pointerId);
+    u.fader.classList.add("drag"); startY = e.clientY; startV = u.value;
+  });
+  u.fader.addEventListener("pointermove", e => { if (u.dragging && e.pointerId === u.pid) { e.preventDefault(); setFromY(e.clientY); } });
+  const end = e => {
+    if (!u.dragging || e.pointerId !== u.pid) return;
+    u.dragging = false; u.fader.classList.remove("drag");
+    u.lastSent = u.value; send({ t: "level", strip: id, value: u.value });   // always send the final value
+    u.touchedAt = Date.now();
+  };
+  u.fader.addEventListener("pointerup", end); u.fader.addEventListener("pointercancel", end);
+  u.fader.addEventListener("dblclick", e => e.preventDefault());
+  u.fader.addEventListener("keydown", e => {            // keyboard: arrows nudge
+    const d = e.key === "ArrowUp" || e.key === "ArrowRight" ? 0.01 : e.key === "ArrowDown" || e.key === "ArrowLeft" ? -0.01 : 0;
+    if (!d) return; e.preventDefault();
+    u.value = Math.min(page.max, Math.max(0, u.value + d)); paintFader(u); u.lastSent = u.value; send({ t: "level", strip: id, value: u.value });
+  });
+}
+function applyEnabled() {
+  const s = $("strips"); if (s) s.classList.toggle("off", !connected);
+  setBanner(!connected ? "Mixer not connected" : page && page.bus ? "Your mix → " + page.bus : "", !connected ? "err" : "bus");
+}
+function applyState(m) {
+  connected = m.connected !== false;
+  if (!page) return;
+  if (!gotState) { gotState = true; buildStrips(); }
+  applyEnabled();
+  for (const id in m.strips || {}) {
+    const u = ui[id], s = m.strips[id]; if (!u) continue;
+    if (!u.dragging) { u.value = s.value; paintFader(u, fmtDb(String(s.db))); }   // never overwrite a touched fader
+    u.dbText = fmtDb(String(s.db));
+    if (u.muted !== !!s.muted) { u.muted = !!s.muted; paintMute(u); }
+  }
+}
+
+/* ---------- meters ---------- */
+const dbToFrac = d => Math.min(1, Math.max(0, (d + 60) / 60));
+function applyMeters(m) {
+  const now = performance.now();
+  for (const id in m) {
+    const u = ui[id]; if (!u || !u.bar) continue;
+    const d = typeof m[id] === "number" ? m[id] : -90, f = dbToFrac(d);
+    u.bar.style.transform = `scaleY(${f})`;
+    u.bar.className = "bar" + (d > -3 ? " r" : d > -12 ? " y" : "");
+    const p = meters[id] || (meters[id] = { peak: 0, t: 0 });
+    if (f >= p.peak || now - p.t > 1000) { p.peak = f; p.t = now; }
+    u.peakF = p.peak;
+    u.peak.style.opacity = p.peak > 0.01 ? 1 : 0;
+    u.peak.style.transform = `translateY(${(1 - p.peak) * (u.meterBox.clientHeight - 2)}px)`;
+  }
+}
+/* Peak-hold expiry: drop peaks that have not been refreshed for 1 s. */
+setInterval(() => {
+  const now = performance.now();
+  for (const id in meters) { const p = meters[id], u = ui[id]; if (u && u.peak && p.peak > 0 && now - p.t > 1000) { p.peak = 0; u.peak.style.opacity = 0; } }
+}, 250);
+
+/* ---------- websocket ---------- */
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+function connect() {
+  clearTimeout(retryTimer);
+  if (ws && ws.readyState <= 1) return;
+  setStatus("warn", failures ? "Reconnecting…" : "Connecting…");
+  try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"); }
+  catch (_) { return scheduleRetry(); }
+  const sock = ws;
+  sock.onopen = () => { backoff = 500; };
+  sock.onmessage = ev => { if (sock === ws) { let m; try { m = JSON.parse(ev.data); } catch (_) { return; } handle(m); } };
+  sock.onclose = () => { if (sock === ws) { ws = null; scheduleRetry(); } };
+  sock.onerror = () => { try { sock.close(); } catch (_) {} };
+}
+function scheduleRetry() {
+  failures++;
+  setStatus(failures > 3 ? "bad" : "warn", failures > 3 ? "Remote offline" : "Reconnecting…");
+  if (failures > 3 && !page) message("Remote offline");
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(connect, backoff);
+  backoff = Math.min(5000, backoff * 2);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && (!ws || ws.readyState > 1)) { backoff = 500; connect(); }
+});
+
+function openPage(i, remember) {
+  pageIdx = i; page = null; gotState = false; ui = {};
+  if (remember) { wantName = pages[i].name; store.set(localStorage, "page", wantName); }
+  updateHeader(); message("Waiting for mixer…");
+  send({ t: "open", page: i });
+}
+function handle(m) {
+  switch (m.t) {
+    case "hello":
+      mixerName = m.name || ""; needPin = !!m.pin; updateHeader();
+      if (needPin) { if (pin) send({ t: "auth", pin }); else showPin(false); }
+      break;
+    case "auth":
+      if (m.ok === false) { pin = ""; store.del(sessionStorage, "pin"); showPin(true); }
+      break;
+    case "pages": {
+      failures = 0; setStatus("ok", "Connected");
+      pages = m.pages || [];
+      const cur = pageIdx != null ? pages.findIndex(p => p.name === wantName) : -1;   // re-open after reconnect
+      const mem = pages.findIndex(p => p.name === wantName);
+      if (pages.length === 1) openPage(0, false);
+      else if (cur >= 0) openPage(cur, false);
+      else if (pageIdx == null && mem >= 0 && !showPicker.manual) openPage(mem, false);
+      else { pageIdx = null; page = null; showPicker(); }
+      break;
+    }
+    case "page":
+      if (m.index !== pageIdx) break;
+      page = { name: m.name, bus: m.bus || null, max: typeof m.max === "number" ? m.max : 1, strips: m.strips || [], meters: m.meters };
+      gotState = false; updateHeader(); message("Waiting for mixer…");
+      break;
+    case "state": applyState(m); break;
+    case "meters": if (gotState) applyMeters(m.m || {}); break;
+    case "error": setBanner(m.msg || "Error", "err"); setTimeout(applyEnabled, 3000); break;
+  }
+}
+window.addEventListener("resize", () => Object.keys(ui).forEach(id => paintFader(ui[id], ui[id].dragging ? null : ui[id].dbText)));
+message("Connecting…");
+connect();
+</script>
+</body>
+</html>
