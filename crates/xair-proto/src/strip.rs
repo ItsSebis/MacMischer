@@ -96,6 +96,20 @@ impl StripId {
         }
     }
 
+    /// Index for `/-stat/solosw/NN`. UNVERIFIED mapping (X Air docs): ch 1–16, aux 17,
+    /// FX rtn 18–21, bus 22–27, FX send 28–31, LR 32, DCA 33–36.
+    pub fn solo_index(self) -> u8 {
+        match self {
+            StripId::Ch(n) => n,
+            StripId::AuxIn => 17,
+            StripId::FxRtn(n) => 17 + n,
+            StripId::Bus(n) => 21 + n,
+            StripId::FxSend(n) => 27 + n,
+            StripId::Main => 32,
+            StripId::Dca(n) => 32 + n,
+        }
+    }
+
     /// Short label like on the console: `12`, `AUX`, `FX2`, `B3`, `S1`, `D4`, `LR`.
     pub fn short(self) -> String {
         match self {

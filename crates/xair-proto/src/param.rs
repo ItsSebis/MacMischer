@@ -165,6 +165,7 @@ impl Param {
             v.push(Param::On(s));
             v.push(Param::Name(s));
             v.push(Param::Color(s));
+            v.push(Param::Solo(s.solo_index()));
             if s.has_pan() {
                 v.push(Param::Pan(s));
             }

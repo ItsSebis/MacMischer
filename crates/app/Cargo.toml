@@ -10,3 +10,4 @@ xair-proto.workspace = true
 eframe.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+xair-mock.workspace = true
