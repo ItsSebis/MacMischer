@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 use xair_proto::fader::to_db;
 use xair_proto::osc::{decode, encode, from_osc, to_osc};
 use xair_proto::strip::StripId;
-use xair_proto::{meters, routing, Param, Value};
+use xair_proto::proc::eq_bands;
+use xair_proto::{meters, routing, EqField, Param, Proc, Value};
 
 const SUB_TTL: Duration = Duration::from_secs(10);
 const METER_PERIOD: Duration = Duration::from_millis(50);
@@ -79,9 +80,45 @@ fn default_for(p: Param) -> Value {
             routing::Output::P16(_) => 3,
             _ => 0,
         }),
+        Param::Proc(s, p) => proc_default(s, p),
         Param::SnapIndex => Value::Int(1),
         Param::SnapName(1) => Value::Str("Home".into()),
         Param::SnapName(_) => Value::Str(String::new()),
+    }
+}
+
+fn proc_default(s: StripId, p: Proc) -> Value {
+    let f = Value::Float;
+    match p {
+        Proc::Hpf => f(0.2),
+        Proc::Eq(b, field) => {
+            let n = eq_bands(s);
+            match field {
+                EqField::Type => {
+                    let t: &[i32] = if n == 4 { &[2, 2, 2, 5] } else { &[1, 2, 2, 2, 2, 4] };
+                    Value::Int(t[b as usize - 1])
+                }
+                EqField::F => f(if n == 4 { 0.2 * b as f32 } else { 0.1 + 0.16 * (b - 1) as f32 }),
+                EqField::G => f(0.5),
+                EqField::Q => f(0.4648),
+            }
+        }
+        Proc::GateMode => Value::Int(3),
+        Proc::GateThr => f(0.25625),
+        Proc::GateRange => f(0.5),
+        Proc::GateAttack => f(0.1),
+        Proc::GateHold => f(0.85),
+        Proc::GateRelease => f(0.76),
+        Proc::GateFilterF | Proc::DynFilterF => f(0.565),
+        Proc::DynRatio => Value::Int(5),
+        Proc::DynThr => f(0.5),
+        Proc::DynKnee => f(0.2),
+        Proc::DynMgain | Proc::DynMix => f(0.0),
+        Proc::DynAttack => f(0.2),
+        Proc::DynHold => f(0.54),
+        Proc::DynRelease => f(0.51),
+        _ if p.is_int() => Value::Int(0),
+        _ => f(0.5),
     }
 }
 

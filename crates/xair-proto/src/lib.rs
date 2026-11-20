@@ -4,9 +4,13 @@ pub mod fader;
 pub mod meters;
 pub mod osc;
 pub mod param;
+pub mod proc;
 pub mod routing;
+pub mod scale;
 pub mod strip;
 
+pub use proc::{EqField, Proc};
+pub use scale::Scale;
 pub use param::{Param, SendTo, Value};
 pub use strip::StripId;
 

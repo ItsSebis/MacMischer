@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::time::Instant;
-use xair_proto::{fader, meters, Param, SendTo, StripId, Value};
+use xair_proto::{fader, meters, Param, Proc, SendTo, StripId, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MixerInfo {
@@ -124,6 +124,18 @@ impl MixerState {
     }
     pub fn phantom(&self, headamp: u8) -> bool {
         self.i(Param::Phantom(headamp), 0) != 0
+    }
+    /// Raw 0..1 float of a processing parameter (0 if unknown).
+    pub fn proc_f(&self, s: StripId, p: Proc) -> f32 {
+        self.f(Param::Proc(s, p), 0.0)
+    }
+    /// Integer value of a processing switch / enum (0 if unknown).
+    pub fn proc_i(&self, s: StripId, p: Proc) -> i32 {
+        self.i(Param::Proc(s, p), 0)
+    }
+    /// Real-world value (Hz, dB, ms, ...) of a scaled float processing parameter.
+    pub fn proc_value(&self, s: StripId, p: Proc) -> Option<f32> {
+        Some(p.scale()?.to_value(self.proc_f(s, p)))
     }
     pub fn snap_index(&self) -> i32 {
         self.i(Param::SnapIndex, 0)

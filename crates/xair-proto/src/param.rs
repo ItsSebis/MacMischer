@@ -1,6 +1,7 @@
 //! Typed mixer parameters <-> OSC address paths.
 
 use crate::routing::Output;
+use crate::proc::{self, EqField, Proc};
 use crate::strip::{StripId, BUSES, FX};
 
 /// A value as carried over OSC.
@@ -118,6 +119,8 @@ pub enum Param {
     RouteSrc(Output),
     /// int tap code, see `routing::tap_label` (outputs with `has_pos`)
     RoutePos(Output),
+    /// channel processing (HPF, EQ, gate, compressor); see `proc`
+    Proc(StripId, Proc),
 }
 
 impl Param {
@@ -149,6 +152,7 @@ impl Param {
             Param::RtnSw(s) => format!("{}/preamp/rtnsw", s.prefix()),
             Param::RouteSrc(o) => format!("{}/src", o.prefix()),
             Param::RoutePos(o) => format!("{}/pos", o.prefix()),
+            Param::Proc(s, p) => format!("{}{}", s.prefix(), p.suffix()),
         }
     }
 
@@ -174,6 +178,9 @@ impl Param {
                     Some(Param::RtnSw(strip))
                 }
                 _ => {
+                    if let Some(p) = Proc::parse_suffix(rest) {
+                        return p.valid_for(strip).then_some(Param::Proc(strip, p));
+                    }
                     let r = rest.strip_prefix("/mix/")?;
                     let (idx, leaf) = r.split_once('/')?;
                     let to = SendTo::from_index(idx.parse().ok()?)?;
@@ -226,7 +233,7 @@ impl Param {
         match self {
             Param::Fader(s) | Param::On(s) | Param::Pan(s) | Param::Name(s) | Param::Color(s)
             | Param::DcaGroups(s) | Param::MuteGroups(s) | Param::MainAssign(s)
-            | Param::SendLevel(s, _) | Param::SendTap(s, _) => Some(s),
+            | Param::SendLevel(s, _) | Param::SendTap(s, _) | Param::Proc(s, _) => Some(s),
             _ => None,
         }
     }
@@ -256,6 +263,9 @@ impl Param {
                     }
                 }
             }
+        }
+        for s in StripId::all() {
+            v.extend(proc_params(s).into_iter().map(|p| Param::Proc(s, p)));
         }
         for h in 1..=18 {
             v.push(Param::Gain(h));
@@ -290,6 +300,23 @@ impl Param {
         }
         v
     }
+}
+
+/// Every processing parameter that exists on strip `s`.
+pub fn proc_params(s: StripId) -> Vec<Proc> {
+    let mut v = Vec::new();
+    for (p, _) in proc::all_fixed() {
+        if p.valid_for(s) && !matches!(p, Proc::EqOn) {
+            v.push(p);
+        }
+    }
+    if proc::eq_bands(s) > 0 {
+        v.push(Proc::EqOn);
+        for b in 1..=proc::eq_bands(s) {
+            v.extend(EqField::ALL.map(|f| Proc::Eq(b, f)));
+        }
+    }
+    v
 }
 
 /// "3-4" → pair 2.
@@ -335,8 +362,18 @@ mod tests {
     }
 
     #[test]
+    fn proc_paths() {
+        let p = Param::Proc(StripId::Bus(2), Proc::Eq(6, EqField::Q));
+        assert_eq!(p.path(), "/bus/2/eq/6/q");
+        assert_eq!(Param::parse("/ch/03/gate/filter/f"), Some(Param::Proc(StripId::Ch(3), Proc::GateFilterF)));
+        assert_eq!(Param::parse("/lr/dyn/ratio"), Some(Param::Proc(StripId::Main, Proc::DynRatio)));
+    }
+
+    #[test]
     fn unknown_paths() {
-        assert_eq!(Param::parse("/ch/01/eq/1/f"), None);
+        assert_eq!(Param::parse("/ch/01/eq/5/f"), None);
+        assert_eq!(Param::parse("/fxsend/1/eq/1/f"), None);
+        assert_eq!(Param::parse("/bus/1/gate/on"), None);
         assert_eq!(Param::parse("/dca/1/mix/fader"), None);
         assert_eq!(Param::parse("/ch/01/mix/11/level"), None);
     }

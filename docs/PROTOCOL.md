@@ -101,3 +101,30 @@ Typed per-address reads/writes (single value each):
 | else | 480f - 90 |
 
 0 = -inf; 0.75 = 0 dB. Implemented in `crates/xair-proto/src/fader.rs`.
+
+## Channel processing (`xair_proto::proc`, `scale`)
+
+Paths are `<strip prefix><suffix>`. Float values are 0..1 on the wire; scales below were verified against hardware (`/node` text).
+
+| Block | Suffix | Type / scale |
+|---|---|---|
+| HPF (Ch only) | `/preamp/hpon`, `/preamp/invert` | int 0/1 |
+| | `/preamp/hpf` | log 20..400 Hz (`20*20^x`); no `hpslope` |
+| EQ (Ch, AuxIn, FxRtn: 4 bands; Bus, Main: 6; FX send/DCA: none) | `/eq/on` | int |
+| | `/eq/<b>/type` | int 0 LCut, 1 LShv, 2 PEQ, 3 VEQ, 4 HShv, 5 HCut |
+| | `/eq/<b>/f` | log 20..20000 Hz (`20*1000^x`), 201 steps |
+| | `/eq/<b>/g` | lin -15..+15 dB, 61 steps |
+| | `/eq/<b>/q` | log 10..0.3 (`10*(0.03)^x`), 72 steps (x = n/71) |
+| | `/eq/mode` (6-band) | int, 0 = PEQ; read-only for us, not modelled |
+| Gate (Ch only) | `/gate/on`, `mode` | int; mode 0 EXP2, 1 EXP3, 2 EXP4, 3 GATE, 4 DUCK |
+| | `thr` / `range` / `attack` | lin -80..0 dB / 3..60 dB / 0..120 ms |
+| | `hold` / `release` | log 0.02..2000 ms (`0.02*1e5^x`) / 5..4000 ms (`5*800^x`) |
+| | `keysrc`, `filter/on`, `filter/type` | int; filter type 0 LC6, 1 LC12, 2 HC6, 3 HC12, 4 1.0, 5 2.0, 6 3.0, 7 5.0, 8 10.0 |
+| | `filter/f` | as EQ frequency |
+| Compressor `/dyn` (Ch, Bus, Main) | `on`, `mode` (0 COMP, 1 EXP), `det` (0 PEAK, 1 RMS), `env` (0 LIN, 1 LOG), `auto`, `keysrc`, `filter/on`, `filter/type` | int |
+| | `ratio` | int enum [1.1, 1.3, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10, 20, 100] |
+| | `thr` / `knee` / `mgain` / `mix` | lin -60..0 dB / 0..5 / 0..24 dB / 0..100 % |
+| | `attack` / `hold` / `release` | as gate |
+| | `filter/f` | as EQ frequency |
+
+Notes: `/lr/dyn/keysrc` does not answer on the XR18 (excluded from the sync set). `/ch/NN/insert/on|sel` are not modelled yet.

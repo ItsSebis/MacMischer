@@ -7,6 +7,7 @@ mod app;
 mod bank_editor;
 mod banks;
 mod connect;
+mod eqmath;
 mod input;
 mod keymap;
 mod prefs;
