@@ -163,7 +163,7 @@ mod tests {
         let s = Show::load(&p).unwrap();
         assert_eq!(s.banks[0].strips, vec![StripId::Ch(1), StripId::Bus(2)]);
         assert_eq!(s.banks[0].bus, None);
-        assert!(!s.banks[0].positional);
+        assert!(s.banks[0].positional, "bank position numbering is the default");
         assert_eq!(s.current_bank, 0);
     }
 

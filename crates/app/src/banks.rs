@@ -61,14 +61,18 @@ pub struct Bank {
     /// When set, faders of input strips control their send to this bus/FX (sends-on-fader).
     #[serde(default, with = "sendto_serde", skip_serializing_if = "Option::is_none")]
     pub bus: Option<SendTo>,
-    /// Number keys pick the n-th strip of this bank instead of mixer channel n.
-    #[serde(default)]
+    /// Number keys pick the n-th strip of this bank instead of mixer channel n (default).
+    #[serde(default = "default_true")]
     pub positional: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Bank {
     pub fn new(name: &str, strips: impl IntoIterator<Item = StripId>) -> Bank {
-        Bank { name: name.into(), strips: strips.into_iter().collect(), bus: None, positional: false }
+        Bank { name: name.into(), strips: strips.into_iter().collect(), bus: None, positional: true }
     }
 }
 

@@ -55,8 +55,8 @@ impl BankEditor {
 
                     ui.label("Number keys");
                     ui.horizontal(|ui| {
-                        ui.radio_value(&mut self.draft.positional, false, "Mixer channel (12 = Ch 12)");
                         ui.radio_value(&mut self.draft.positional, true, "Bank position (3 = 3rd fader)");
+                        ui.radio_value(&mut self.draft.positional, false, "Mixer channel (12 = Ch 12)");
                     });
                     ui.end_row();
                 });

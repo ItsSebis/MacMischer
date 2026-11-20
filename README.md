@@ -18,7 +18,7 @@ macOS app bundle: `cargo install cargo-bundle && cargo bundle --release -p macmi
 
 | Keys | Action |
 |---|---|
-| `1`…`16` | select channel (or bank position, per bank) — commits automatically |
+| `1`…`16` | select the n-th strip of the bank (or mixer channel, per bank) — commits automatically |
 | `a1`–`a6`, `f1`–`f4`, `x1`–`x4`, `d1`–`d4`, `r`, `l` | bus, FX return, FX send, DCA, aux in, main |
 | `↑` `↓` | fader ±1 dB (Shift ±3, Alt ±0.1); `0 0` = 0 dB |
 | `←` `→`, Tab | previous / next strip in the bank |

@@ -27,7 +27,7 @@ Real XR18 is always reachable during development.
 - **Input:** keyboard FIRST; trackpad/mouse; touch-friendly sizing; MIDI later (none owned yet → `Action` abstraction now so MIDI just maps to actions later).
 - **Channel select:** type digits + auto-commit (~400 ms or Enter): `12` → ch 12. Prefixes: `a`=bus 1–6, `f`=FX return 1–4, `x`=FX send 1–4, `d`=DCA 1–4, `l`=main LR, `r`=aux in (`m`/`s` are mute/solo). Esc cancels.
 - **Level keys:** ↑/↓ ±1 dB, Shift ±3 dB, Alt ±0.1 dB; ←/→ previous/next strip in bank (user feedback); pan on `,` `.` (`<` `>` coarse); `M` mute, `S` solo; `0` `0` = unity; scroll/drag with mouse.
-- **Number keys per bank:** each bank chooses *mixer channel* (12 = Ch 12) or *bank position* (3 = 3rd fader, shown as #3 under strips). Prefixed entries stay global.
+- **Number keys per bank:** each bank chooses *bank position* (DEFAULT, user choice 2026-11-20: 3 = 3rd fader, shown as #3 under strips) or *mixer channel* (12 = Ch 12). Prefixed entries stay global.
 - **Stereo links:** linked ch/bus pairs (`/config/chlink/1-2`, `/config/buslink/1-2`) show as one wide strip, two meters, one fader. Mixer mirrors linked fader/mute itself but doesn't echo to sender → `Mixer::set` mirrors locally + sends both; solo mirrored in app.
 - **DCA editing:** inputs show D1–D4 assignment toggles; selecting a DCA shows a member grid (bitmask `/…/grp/dca`, bit0 = DCA1 — verified on hardware).
 - **Fader banks:** user-defined, any mix of strips (inputs, aux in, FX returns, buses, DCAs, main), any order. Rotate with `[` / `]`, jump with F1–F12. A bank may be **bound to a bus** → its faders control sends to that bus (sends-on-fader monitor bank), shown with strong bus colour.

@@ -83,7 +83,7 @@ impl Keymap {
     /// Human-readable cheat sheet rows.
     pub fn help() -> &'static [(&'static str, &'static str)] {
         &[
-            ("1 ... 16", "select channel (or bank position, if set for the bank)"),
+            ("1 ... 16", "select n-th strip of the bank (or mixer channel, if set for the bank)"),
             ("a1-a6", "select bus"),
             ("f1-f4 / x1-x4", "FX return / FX send"),
             ("d1-d4", "select DCA"),
