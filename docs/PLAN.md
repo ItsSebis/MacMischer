@@ -66,6 +66,10 @@ crates/
 - **M4 Keyboard + banks:** digit selection, nudges, keymap, banks editor, bus-bound banks, rotation.
 - **M5 Show files + connection UX.**
 - **M6 Scenes & routing + safety** → **v1 release** (macOS `.app` via cargo-bundle, Linux/Windows builds).
+- **Web remote (added 2026-11-20, user request):** the app serves a small web page so phones/tablets on the LAN control *selected* strips.
+  - Inspiration only: ~/xrvol (Python TV-volume remote for DCA 2; buggy — do not copy). Keep its good ideas: per-control max cap (speaker protection), big touch targets, iPhone home-screen/PWA fullscreen, honest status ("mixer not responding"), never jump before first sync, don't overwrite a slider while dragging, real dB readout, muted = red.
+  - Avoid its flaws: no polling (push via WebSocket from xair-core state), absolute values only (no relative/toggle races: mute sends the target value), one shared mixer connection (the app's), no hardcoded IP/channel, validate input, optional PIN, bind to LAN, origin check (CSRF).
+  - Config in the show file: "remote pages" (name, list of strips or a bank, optional bus = personal monitor mix, per-strip max level, PIN). QR code in the app to open a page on a phone. Embedded server (axum + tokio on its own thread, or tiny_http + tungstenite).
 - **M7+:** processing, FX, RTA, undo/A-B, offline editing, presets, MIDI.
 
 ## Verification
