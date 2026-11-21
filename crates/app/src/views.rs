@@ -6,7 +6,7 @@ use crate::widgets::{self, Ballistics};
 use eframe::egui::{self, Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use std::collections::HashMap;
 use xair_core::{Meters, MixerState};
-use xair_proto::{fader, Param, SendTo, StripId, Value};
+use xair_proto::{fader, Param, Proc, SendTo, StripId, Value};
 
 pub const STRIP_W: f32 = 86.0;
 pub const STRIP_W_STEREO: f32 = 118.0;
@@ -186,8 +186,58 @@ fn name_tag_with(ui: &mut Ui, c: &mut Ctx, s: StripId, width: f32, mut name: Str
         name = name.chars().take(max_chars).collect();
     }
     p.text(rect.center(), Align2::CENTER_CENTER, name, FontId::proportional(12.5), fg);
-    if resp.clicked() {
+    if resp.double_clicked() && !matches!(s, StripId::Main) {
+        ui.ctx().data_mut(|d| d.insert_temp(rename_flag(), true));
+    }
+    if resp.clicked() || resp.double_clicked() {
         c.actions.push(Action::Select(s));
+    }
+}
+
+fn rename_flag() -> egui::Id {
+    egui::Id::unique("rename-active")
+}
+
+/// Rename fields for the selected strip (and its linked partner). Enter commits, Esc cancels.
+fn rename_ui(ui: &mut Ui, c: &mut Ctx, s: StripId) {
+    let active = ui.ctx().data(|d| d.get_temp::<bool>(rename_flag())).unwrap_or(false);
+    if !active {
+        if ui.small_button("Rename").on_hover_text("Rename (or double-click the name)").clicked() {
+            ui.ctx().data_mut(|d| d.insert_temp(rename_flag(), true));
+        }
+        return;
+    }
+    let strips: Vec<StripId> = std::iter::once(s).chain(c.st.linked_partner(s)).collect();
+    let mut done = false;
+    for x in strips {
+        let id = egui::Id::unique(("rename-buf", x));
+        let mut buf: String = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_else(|| c.st.name(x));
+        let r = ui.add(egui::TextEdit::singleline(&mut buf).char_limit(12).desired_width(120.0));
+        if !r.has_focus() && !r.lost_focus() && x == s {
+            r.request_focus();
+        }
+        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        if enter {
+            c.actions.push(Action::Set(Param::Name(x), Value::Str(buf.trim().to_string())));
+            done = true;
+        }
+        if esc {
+            done = true;
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(id, buf));
+    }
+    if ui.small_button("Done").clicked() {
+        done = true;
+    }
+    if done {
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(rename_flag(), false);
+            d.remove_temp::<String>(egui::Id::unique(("rename-buf", s)));
+        });
+        if let Some(p) = c.st.linked_partner(s) {
+            ui.ctx().data_mut(|d| d.remove_temp::<String>(egui::Id::unique(("rename-buf", p))));
+        }
     }
 }
 
@@ -349,7 +399,12 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
         ui.vertical(|ui| {
             ui.set_width(200.0);
             name_tag(ui, c, s, 200.0);
-            ui.label(egui::RichText::new(s.to_string()).color(theme::DIM));
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(s.to_string()).color(theme::DIM));
+                if !matches!(s, StripId::Main) {
+                    rename_ui(ui, c, s);
+                }
+            });
             let db = c.st.fader_db(s);
             ui.label(egui::RichText::new(format!("{} dB", widgets::fmt_db(db))).size(30.0).monospace());
             ui.horizontal(|ui| {
@@ -417,6 +472,19 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
             } else {
                 ui.label(egui::RichText::new("no preamp").color(theme::DIM));
             }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if matches!(s, StripId::Ch(_)) {
+                    let inv = c.st.proc_i(s, Proc::Invert) != 0;
+                    if widgets::toggle(ui, Vec2::new(64.0, 22.0), "Phase Ø", inv, theme::ACCENT)
+                        .on_hover_text("Polarity reverse")
+                        .clicked()
+                    {
+                        c.actions.push(Action::Set(Param::Proc(s, Proc::Invert), Value::Int(!inv as i32)));
+                    }
+                }
+                link_toggle(ui, c, s);
+            });
             if s.has_groups() {
                 ui.add_space(6.0);
                 group_row(ui, c, Param::DcaGroups(s), "DCA", "D");
@@ -464,6 +532,29 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
             });
         });
     });
+}
+
+/// Stereo link of a channel / bus with its odd-even neighbour (1-2, 3-4, …).
+fn link_toggle(ui: &mut Ui, c: &mut Ctx, s: StripId) {
+    let (n, param, label): (u8, fn(u8) -> Param, &str) = match s {
+        StripId::Ch(n) => (n, Param::ChLink, "channels"),
+        StripId::Bus(n) => (n, Param::BusLink, "buses"),
+        _ => return,
+    };
+    let pair = n.div_ceil(2);
+    let (a, b) = (2 * pair - 1, 2 * pair);
+    let linked = c.st.linked_partner(s).is_some();
+    let text = format!("Link {a}-{b}");
+    let r = widgets::toggle(ui, Vec2::new(88.0, 22.0), &text, linked, theme::ACCENT)
+        .on_hover_text(format!("Stereo-link {label} {a} and {b} (one wide strip)"));
+    if r.clicked() {
+        c.actions.push(Action::Set(param(pair), Value::Int(!linked as i32)));
+        // A stereo pair pans hard left/right; unlinking returns both to centre.
+        let (l, rt) = if matches!(s, StripId::Ch(_)) { (StripId::Ch(a), StripId::Ch(b)) } else { (StripId::Bus(a), StripId::Bus(b)) };
+        let (pl, pr) = if linked { (0.5, 0.5) } else { (0.0, 1.0) };
+        c.actions.push(Action::Set(Param::Pan(l), Value::Float(pl)));
+        c.actions.push(Action::Set(Param::Pan(rt), Value::Float(pr)));
+    }
 }
 
 /// Label + 4 toggles editing a group bitmask param (`DcaGroups` / `MuteGroups`).

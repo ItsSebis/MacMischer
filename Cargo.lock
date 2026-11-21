@@ -5029,6 +5029,7 @@ name = "xair-core"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "if-addrs",
  "rosc",
  "tracing",
  "xair-mock",

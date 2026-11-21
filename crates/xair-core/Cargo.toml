@@ -8,6 +8,7 @@ license.workspace = true
 xair-proto.workspace = true
 crossbeam-channel.workspace = true
 rosc.workspace = true
+if-addrs.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

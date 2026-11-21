@@ -32,13 +32,8 @@ name = "MacMischer"
 identifier = "de.adiwidjaja.macmischer"
 category = "public.app-category.music"
 short_description = "Keyboard-first controller for Behringer X Air mixers"
-icon = [
-    "../../assets/icon/icon-32.png",
-    "../../assets/icon/icon-128.png",
-    "../../assets/icon/icon-256.png",
-    "../../assets/icon/icon-512.png",
-    "../../assets/icon/icon-1024.png",
-]
+icon = ["assets/icon/icon.svg"] # paths are relative to where `cargo bundle` runs (repo root)
 
 [package.metadata.bundle.osx]
 minimum_system_version = "11.0"
+info_plist_exts = ["assets/macos-info.plist"]

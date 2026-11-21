@@ -8,7 +8,7 @@ mod discover;
 mod state;
 
 pub use conn::Timing;
-pub use discover::discover;
+pub use discover::{discover, discover_report, Discovery};
 pub use state::{Meters, MixerInfo, MixerState, Status};
 
 use conn::Cmd;

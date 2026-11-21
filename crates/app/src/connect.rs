@@ -10,11 +10,13 @@ use xair_proto::MIXER_PORT;
 
 const RETRY: Duration = Duration::from_secs(3);
 
-type Found = Vec<(SocketAddr, MixerInfo)>;
+type Found = xair_core::Discovery;
 
 pub struct Finder {
     searching: Option<mpsc::Receiver<Found>>,
-    found: Found,
+    found: Vec<(SocketAddr, MixerInfo)>,
+    /// Why the last search could not even send (shown with a hint).
+    send_error: Option<String>,
     /// Last successfully used mixer (unicast-probed too, in case broadcast is filtered).
     remembered: Option<SocketAddr>,
     /// Pick automatically (remembered, or the only one found). Off for "Switch mixer".
@@ -29,6 +31,7 @@ impl Finder {
         Finder {
             searching: None,
             found: Vec::new(),
+            send_error: None,
             remembered,
             auto,
             next_search: Instant::now(),
@@ -42,7 +45,7 @@ impl Finder {
         let ctx = ctx.clone();
         let extra: Vec<_> = self.remembered.map(|a| a.ip()).into_iter().collect();
         std::thread::spawn(move || {
-            let _ = tx.send(xair_core::discover(&extra, Duration::from_millis(800)));
+            let _ = tx.send(xair_core::discover_report(&extra, Duration::from_millis(800)));
             ctx.request_repaint();
         });
         self.searching = Some(rx);
@@ -54,7 +57,8 @@ impl Finder {
             match rx.try_recv() {
                 Ok(found) => {
                     self.searching = None;
-                    self.found = found;
+                    self.found = found.found;
+                    self.send_error = found.send_error;
                     self.next_search = Instant::now() + RETRY;
                     if self.auto {
                         let remembered = self.found.iter().find(|(a, _)| Some(*a) == self.remembered);
@@ -95,6 +99,18 @@ impl Finder {
                         egui::RichText::new("Switch the mixer on — it connects automatically when it appears.")
                             .color(theme::DIM),
                     );
+                    if let Some(e) = &self.send_error {
+                        ui.add_space(8.0);
+                        ui.colored_label(theme::MUTE, format!("Cannot reach the network: {e}"));
+                        if cfg!(target_os = "macos") {
+                            ui.label(
+                                egui::RichText::new(
+                                    "macOS: allow MacMischer under System Settings → Privacy & Security → Local Network, then restart the app.",
+                                )
+                                .color(theme::DIM),
+                            );
+                        }
+                    }
                 } else {
                     ui.label(egui::RichText::new("Choose a mixer").size(16.0));
                     ui.add_space(6.0);

@@ -11,7 +11,9 @@ cargo run --release -p macmischer -- --ip 10.5.5.48
 cargo run --release -p macmischer -- --mock  # built-in fake mixer, no hardware needed
 ```
 
-macOS app bundle: `cargo install cargo-bundle && cargo bundle --release -p macmischer`
+macOS one-step install (build, sign, copy to /Applications, remove build bundles): `tools/install-macos.sh` (`--clean` also wipes `target/`).
+
+macOS app bundle by hand: `cargo install cargo-bundle && cargo bundle --release -p macmischer`
 → `target/release/bundle/osx/MacMischer.app`.
 
 Linux desktop integration (icon in launcher/title bar under Wayland):

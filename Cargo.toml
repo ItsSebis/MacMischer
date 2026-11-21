@@ -13,6 +13,7 @@ xair-core = { path = "crates/xair-core" }
 xair-mock = { path = "crates/xair-mock" }
 xair-remote = { path = "crates/xair-remote" }
 rosc = "0.11"
+if-addrs = "0.15"
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 toml = "1"

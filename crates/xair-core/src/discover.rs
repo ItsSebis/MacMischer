@@ -6,21 +6,57 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 use xair_proto::{osc, MIXER_PORT};
 
-/// Broadcast `/xinfo` to each target (plus 255.255.255.255) and collect replies for `wait`.
-/// Pass subnet broadcast addresses (e.g. 10.5.255.255) for networks where the global
-/// broadcast is filtered, or explicit mixer IPs.
+/// Result of a discovery round.
+#[derive(Debug, Default)]
+pub struct Discovery {
+    pub found: Vec<(SocketAddr, MixerInfo)>,
+    /// Set when no probe could be sent at all (e.g. macOS blocking local-network access, no network).
+    pub send_error: Option<String>,
+}
+
+/// Subnet broadcast address of every up, non-loopback IPv4 interface.
+fn interface_broadcasts() -> Vec<IpAddr> {
+    if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|i| !i.is_loopback())
+        .filter_map(|i| match i.addr {
+            if_addrs::IfAddr::V4(v4) => v4.broadcast.map(IpAddr::V4),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Broadcast `/xinfo` to each target, 255.255.255.255 and every interface's subnet broadcast,
+/// and collect replies for `wait`. Pass explicit mixer IPs (e.g. the remembered one) as extra targets.
 pub fn discover(extra_targets: &[IpAddr], wait: Duration) -> Vec<(SocketAddr, MixerInfo)> {
+    discover_report(extra_targets, wait).found
+}
+
+pub fn discover_report(extra_targets: &[IpAddr], wait: Duration) -> Discovery {
     let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else {
-        return vec![];
+        return Discovery { found: vec![], send_error: Some("cannot open a network socket".into()) };
     };
     let _ = sock.set_broadcast(true);
     let _ = sock.set_read_timeout(Some(Duration::from_millis(50)));
     let msg = osc::encode("/xinfo", vec![]);
     let mut targets = vec![IpAddr::V4(Ipv4Addr::BROADCAST)];
-    targets.extend_from_slice(extra_targets);
-    for t in &targets {
-        let _ = sock.send_to(&msg, SocketAddr::new(*t, MIXER_PORT));
+    for t in interface_broadcasts().into_iter().chain(extra_targets.iter().copied()) {
+        if !targets.contains(&t) {
+            targets.push(t);
+        }
     }
+    let mut sent = 0;
+    let mut first_err = None;
+    for t in &targets {
+        match sock.send_to(&msg, SocketAddr::new(*t, MIXER_PORT)) {
+            Ok(_) => sent += 1,
+            Err(e) => {
+                first_err.get_or_insert(e.to_string());
+            }
+        }
+    }
+    let send_error = if sent == 0 { first_err } else { None };
     let mut found: Vec<(SocketAddr, MixerInfo)> = Vec::new();
     let end = Instant::now() + wait;
     let mut buf = [0u8; 1024];
@@ -40,5 +76,5 @@ pub fn discover(extra_targets: &[IpAddr], wait: Duration) -> Vec<(SocketAddr, Mi
             }
         }
     }
-    found
+    Discovery { found, send_error }
 }
