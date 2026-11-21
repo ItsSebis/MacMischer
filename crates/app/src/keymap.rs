@@ -62,6 +62,8 @@ impl Default for Keymap {
             (Binding::Key(Key::K, CMD), OpenScenes),
             (Binding::Key(Key::R, CMD), OpenRouting),
             (Binding::Key(Key::F, CMD), OpenFx),
+            (Binding::Key(Key::Z, CMD), Undo),
+            (Binding::Key(Key::Y, CMD), Redo),
             (Binding::Key(Key::P, CMD), OpenRemote),
             (Binding::Char('['), BankStep(-1)),
             (Binding::Char(']'), BankStep(1)),

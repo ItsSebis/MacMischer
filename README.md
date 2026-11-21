@@ -31,7 +31,8 @@ The icon source is `assets/icon/icon.svg`; regenerate PNGs with `cargo run -p ic
 | `,` `.` (`<` `>`) | pan |
 | `m` / `s` | mute / solo |
 | `[` `]`, F1–F12 | switch fader bank |
-| Ctrl/Cmd+K / R / L | scenes / routing / lock |
+| Ctrl/Cmd+K / R / F / L | scenes / routing / effects / lock |
+| Ctrl/Cmd+Z / Y | undo / redo your last edits (fader drags count as one step; cleared on scene recall) |
 | `?` | help |
 
 ## Concepts

@@ -41,6 +41,7 @@ pub struct App {
     view: views::DetailView,
     show_routing: bool,
     show_fx: bool,
+    history: crate::history::History,
     /// Lock mode: only mutes, solo, navigation and the main fader respond.
     locked: bool,
     /// Short status message (e.g. "Locked").
@@ -68,6 +69,7 @@ impl App {
             view: views::DetailView::Mix,
             show_routing: false,
             show_fx: false,
+            history: Default::default(),
             locked: false,
             flash: None,
         };
@@ -95,6 +97,7 @@ impl App {
 
     /// Drop the current connection and show the mixer list ("Switch mixer").
     fn switch_mixer(&mut self) {
+        self.history.clear();
         let current = match &self.conn {
             Conn::Mixer(m) => Some(m.addr()),
             Conn::Finding(_) => None,
@@ -186,7 +189,7 @@ impl App {
                 continue;
             }
             match a {
-                Action::Set(p, v) => m.set(p, v),
+                Action::Set(p, v) => put(m, &mut self.history, p, v),
                 Action::Select(s) => self.selected = m.state().link_leader(s),
                 Action::SelectPosition(n) => {
                     let shown = m.state().display_strips(&self.session.banks[self.session.bank].strips);
@@ -219,18 +222,21 @@ impl App {
                 Action::Nudge(db) => {
                     let p = self.level_param(s);
                     let cur = m.state().get(p).and_then(Value::as_f32).unwrap_or(0.0);
-                    m.set(p, Value::Float(nudge_fader(cur, db)));
+                    put(m, &mut self.history, p, Value::Float(nudge_fader(cur, db)));
                 }
-                Action::Unity => m.set(self.level_param(s), Value::Float(UNITY)),
+                Action::Unity => {
+                    let p = self.level_param(s);
+                    put(m, &mut self.history, p, Value::Float(UNITY));
+                }
                 Action::PanNudge(d) => {
                     if s.has_pan() {
                         let v = (m.state().pan(s) + d).clamp(0.0, 1.0);
-                        m.set(Param::Pan(s), Value::Float(v));
+                        put(m, &mut self.history, Param::Pan(s), Value::Float(v));
                     }
                 }
                 Action::ToggleMute => {
                     let on = m.state().on(s);
-                    m.set(Param::On(s), Value::Int(!on as i32));
+                    put(m, &mut self.history, Param::On(s), Value::Int(!on as i32));
                 }
                 Action::ToggleSolo => {
                     let on = m.state().soloed(s);
@@ -238,6 +244,7 @@ impl App {
                 }
                 Action::SetSolo(s, on) => set_solo(m, s, on),
                 Action::RecallScene(i) => {
+                    self.history.clear();
                     m.load_snapshot(i);
                     self.flash = Some((format!("Recalled scene {i}"), Instant::now()));
                 }
@@ -250,6 +257,24 @@ impl App {
                 Action::ToggleLock => self.locked = !self.locked,
                 Action::OpenScenes => self.scenes.open = !self.scenes.open,
                 Action::OpenRouting => self.show_routing = !self.show_routing,
+                Action::Undo => {
+                    match self.history.undo(|p| m.state().get(p).cloned()) {
+                        Some((p, v)) => {
+                            m.set(p, v);
+                            self.flash = Some(("Undo".into(), Instant::now()));
+                        }
+                        None => self.flash = Some(("Nothing to undo".into(), Instant::now())),
+                    }
+                }
+                Action::Redo => {
+                    match self.history.redo(|p| m.state().get(p).cloned()) {
+                        Some((p, v)) => {
+                            m.set(p, v);
+                            self.flash = Some(("Redo".into(), Instant::now()));
+                        }
+                        None => self.flash = Some(("Nothing to redo".into(), Instant::now())),
+                    }
+                }
                 Action::OpenFx => self.show_fx = !self.show_fx,
                 Action::OpenRemote => self.show_remote = !self.show_remote,
                 Action::SetView(v) => self.view = v,
@@ -308,6 +333,13 @@ impl App {
             });
         });
     }
+}
+
+/// Set a parameter, remembering its previous value for undo.
+fn put(m: &Mixer, h: &mut crate::history::History, p: Param, v: Value) {
+    let old = m.state().get(p).cloned();
+    h.record(p, old, Instant::now());
+    m.set(p, v);
 }
 
 /// Solo a strip; linked partners follow (solo isn't mirrored by `Mixer::set`).

@@ -29,6 +29,8 @@ pub enum Action {
     OpenScenes,
     OpenRouting,
     OpenFx,
+    Undo,
+    Redo,
     OpenRemote,
     SetView(crate::views::DetailView),
 }
