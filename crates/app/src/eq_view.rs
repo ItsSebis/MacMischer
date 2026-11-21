@@ -65,6 +65,7 @@ pub fn eq_view(ui: &mut Ui, c: &mut Ctx, s: StripId) {
     });
     let bands = bands(c, s);
 
+    crate::views::ab_buttons(ui, c);
     ui.horizontal_top(|ui| {
         // Left: on/off switches
         ui.vertical(|ui| {

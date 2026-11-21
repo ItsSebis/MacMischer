@@ -15,6 +15,7 @@ pub fn dyn_view(ui: &mut Ui, c: &mut Ctx, s: StripId) {
     let gate = proc::has_gate(s);
     let dynamics = proc::has_dyn(s);
     let avail = ui.available_width();
+    crate::views::ab_buttons(ui, c);
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let w = if gate && dynamics { (avail - 30.0) / 2.0 } else { avail.min(700.0) };

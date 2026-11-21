@@ -30,6 +30,7 @@ The icon source is `assets/icon/icon.svg`; regenerate PNGs with `cargo run -p ic
 | `←` `→`, Tab | previous / next strip in the bank |
 | `,` `.` (`<` `>`) | pan |
 | `m` / `s` | mute / solo |
+| `b` | A/B compare: stores the selected strip's HPF/EQ/gate/comp as A and B on first press, then toggles (undoable; cleared on mixer switch; blocked when locked) |
 | `[` `]`, F1–F12 | switch fader bank |
 | Ctrl/Cmd+K / R / F / L | scenes / routing / effects / lock |
 | Ctrl/Cmd+Z / Y | undo / redo your last edits (fader drags count as one step; cleared on scene recall) |

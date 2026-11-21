@@ -32,6 +32,10 @@ pub enum Action {
     Undo,
     Redo,
     OpenRemote,
+    /// A/B compare: toggle the selected strip between its two processing snapshots.
+    AbToggle,
+    /// A/B compare: switch the selected strip to a given slot.
+    AbSelect(crate::ab::Slot),
     SetView(crate::views::DetailView),
 }
 
@@ -97,6 +101,8 @@ mod tests {
         assert!(Action::Nudge(1.0).allowed_when_locked(StripId::Main));
         assert!(!Action::RecallScene(2).allowed_when_locked(ch));
         assert!(!Action::PanNudge(0.1).allowed_when_locked(ch));
+        assert!(!Action::AbToggle.allowed_when_locked(ch));
+        assert!(!Action::AbSelect(crate::ab::Slot::B).allowed_when_locked(ch));
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub struct App {
     show_routing: bool,
     show_fx: bool,
     history: crate::history::History,
+    ab: crate::ab::Ab,
     /// Lock mode: only mutes, solo, navigation and the main fader respond.
     locked: bool,
     /// Short status message (e.g. "Locked").
@@ -70,6 +71,7 @@ impl App {
             show_routing: false,
             show_fx: false,
             history: Default::default(),
+            ab: Default::default(),
             locked: false,
             flash: None,
         };
@@ -98,6 +100,7 @@ impl App {
     /// Drop the current connection and show the mixer list ("Switch mixer").
     fn switch_mixer(&mut self) {
         self.history.clear();
+        self.ab.clear();
         let current = match &self.conn {
             Conn::Mixer(m) => Some(m.addr()),
             Conn::Finding(_) => None,
@@ -245,6 +248,7 @@ impl App {
                 Action::SetSolo(s, on) => set_solo(m, s, on),
                 Action::RecallScene(i) => {
                     self.history.clear();
+                    self.ab.clear();
                     m.load_snapshot(i);
                     self.flash = Some((format!("Recalled scene {i}"), Instant::now()));
                 }
@@ -277,6 +281,33 @@ impl App {
                 }
                 Action::OpenFx => self.show_fx = !self.show_fx,
                 Action::OpenRemote => self.show_remote = !self.show_remote,
+                Action::AbToggle | Action::AbSelect(_) => {
+                    let params = xair_proto::param::proc_params(s);
+                    if params.is_empty() {
+                        self.flash = Some(("No processing on this strip".into(), Instant::now()));
+                        continue;
+                    }
+                    let live: crate::ab::Snapshot = params
+                        .iter()
+                        .filter_map(|&p| {
+                            let p = Param::Proc(s, p);
+                            m.state().get(p).cloned().map(|v| (p, v))
+                        })
+                        .collect();
+                    if live.len() < params.len() {
+                        self.flash = Some(("A/B: mixer still syncing".into(), Instant::now()));
+                        continue;
+                    }
+                    let writes = match a {
+                        Action::AbSelect(slot) => self.ab.select(s, slot, live),
+                        _ => self.ab.toggle(s, live),
+                    };
+                    // Not recorded in undo: the A/B slots already make a swap reversible, and
+                    // undoing single values would desync the active slot.
+                    for (p, v) in writes {
+                        m.set(p, v);
+                    }
+                }
                 Action::SetView(v) => self.view = v,
             }
         }
@@ -410,6 +441,7 @@ impl eframe::App for App {
             selected: self.selected,
             actions: &mut actions,
             view: self.view,
+            ab: self.ab.active(self.selected),
         };
 
         egui::Panel::top("status").show(ui, |ui| {

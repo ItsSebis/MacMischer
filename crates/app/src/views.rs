@@ -19,6 +19,8 @@ pub struct Ctx<'a> {
     pub selected: StripId,
     pub actions: &'a mut Vec<Action>,
     pub view: DetailView,
+    /// A/B compare slot loaded for the selected strip, if started.
+    pub ab: Option<crate::ab::Slot>,
 }
 
 /// What the detail panel shows for the selected strip.
@@ -28,6 +30,23 @@ pub enum DetailView {
     Mix,
     Eq,
     Dynamics,
+}
+
+/// A/B compare buttons (also bound to `b`); the loaded slot is highlighted.
+pub fn ab_buttons(ui: &mut Ui, c: &mut Ctx) {
+    use crate::ab::Slot;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("A/B").size(10.0).color(crate::theme::DIM));
+        for (slot, name) in [(Slot::A, "A"), (Slot::B, "B")] {
+            let on = c.ab == Some(slot);
+            let r = ui
+                .add(egui::Button::new(name).selected(on).min_size(Vec2::new(24.0, 0.0)))
+                .on_hover_text("Compare two versions of this strip's EQ / dynamics (key: b)");
+            if r.clicked() {
+                c.actions.push(Action::AbSelect(slot));
+            }
+        }
+    });
 }
 
 impl Ctx<'_> {

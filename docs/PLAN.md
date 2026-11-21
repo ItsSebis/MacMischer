@@ -99,3 +99,4 @@ crates/
 3. **MIDI** — `midir` input thread → `Action`s (CC → fader/pan, note → mute/solo/scene); mapping stored in prefs (not show file); learn mode; feature must degrade cleanly with no MIDI device; pure mapping logic unit-tested.
 4. **RTA overlay** — `/meters/4` (RTA, 100 bands) on the EQ view as a spectrum behind the curve; needs hardware to verify format (`/-prefs/rta/...` source select); parsing unit-tested against synthetic data, flagged unverified.
 Rules for every step: `cargo test` + `cargo clippy --all-targets` clean, no hardware writes in tests, update README/PLAN, don't commit — the orchestrator commits after review.
+- 2026-11-21: M8.1 A/B compare done (crates/app/src/ab.rs, key `b`, A/B buttons in EQ/dynamics views). Opus review fixes: swaps bypass undo (m.set), slots cleared on scene recall/mixer switch, refuse while syncing / on strips without processing. Not fixed (low): slots not cleared when ChLink/BusLink changes.
