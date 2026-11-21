@@ -36,6 +36,17 @@ pub enum Action {
     AbToggle,
     /// A/B compare: switch the selected strip to a given slot.
     AbSelect(crate::ab::Slot),
+    /// Save the selected strip's processing as a named preset.
+    PresetSave(String),
+    /// Load a named preset onto the selected strip.
+    PresetLoad(String),
+    PresetDelete(String),
+    /// Load a preset after the user confirmed the compatibility / Safe-mode prompt.
+    PresetLoadConfirmed(String),
+    /// Re-read the preset directory (menu opened).
+    PresetRefresh,
+    /// Restore the strip values overwritten by the last preset load.
+    PresetUndo,
     SetView(crate::views::DetailView),
 }
 
@@ -73,6 +84,7 @@ impl Action {
             | Action::OpenRouting
             | Action::OpenFx
             | Action::OpenRemote
+            | Action::PresetRefresh
             | Action::SetView(_) => true,
             Action::Set(p, _) => matches!(
                 p,
@@ -102,6 +114,12 @@ mod tests {
         assert!(!Action::RecallScene(2).allowed_when_locked(ch));
         assert!(!Action::PanNudge(0.1).allowed_when_locked(ch));
         assert!(!Action::AbToggle.allowed_when_locked(ch));
+        assert!(!Action::PresetSave("x".into()).allowed_when_locked(ch));
+        assert!(!Action::PresetLoad("x".into()).allowed_when_locked(StripId::Main));
+        assert!(!Action::PresetDelete("x".into()).allowed_when_locked(ch));
+        assert!(!Action::PresetLoadConfirmed("x".into()).allowed_when_locked(ch));
+        assert!(Action::PresetRefresh.allowed_when_locked(ch));
+        assert!(!Action::PresetUndo.allowed_when_locked(ch));
         assert!(!Action::AbSelect(crate::ab::Slot::B).allowed_when_locked(ch));
     }
 

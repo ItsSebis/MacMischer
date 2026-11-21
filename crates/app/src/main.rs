@@ -3,6 +3,7 @@
 //! `macmischer [--ip <addr>] [--mock]` — without options the mixer is discovered by broadcast.
 
 mod ab;
+mod presets;
 mod actions;
 mod app;
 mod bank_editor;

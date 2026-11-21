@@ -21,6 +21,10 @@ pub struct Ctx<'a> {
     pub view: DetailView,
     /// A/B compare slot loaded for the selected strip, if started.
     pub ab: Option<crate::ab::Slot>,
+    /// Saved preset names (cached; refreshed after save/delete).
+    pub presets: &'a [String],
+    /// An "Undo preset" is available for the selected strip.
+    pub preset_undo: bool,
 }
 
 /// What the detail panel shows for the selected strip.
@@ -46,7 +50,112 @@ pub fn ab_buttons(ui: &mut Ui, c: &mut Ctx) {
                 c.actions.push(Action::AbSelect(slot));
             }
         }
+        ui.separator();
+        preset_menu(ui, c);
     });
+}
+
+/// "Presets" menu: load / save as / delete named processing presets for the selected strip.
+pub fn preset_menu(ui: &mut Ui, c: &mut Ctx) {
+    #[derive(Clone, PartialEq)]
+    enum Pending {
+        Delete(String),
+        Overwrite(String),
+    }
+    #[derive(Clone, Default)]
+    struct St {
+        name: String,
+        was_open: bool,
+        /// Awaiting confirmation, for this strip only.
+        pending: Option<(Pending, StripId)>,
+    }
+    let id = ui.make_persistent_id("preset_menu");
+    let mut st: St = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+    let has_proc = !xair_proto::param::proc_params(c.selected).is_empty();
+    if st.pending.as_ref().is_some_and(|(_, s)| *s != c.selected) {
+        st.pending = None;
+    }
+    let mut close = false;
+    let r = ui.menu_button("Presets", |ui| {
+        ui.set_min_width(220.0);
+        if !st.was_open {
+            c.actions.push(Action::PresetRefresh);
+        }
+        if c.presets.is_empty() {
+            ui.label(egui::RichText::new("No presets saved yet").color(crate::theme::DIM));
+        }
+        for n in c.presets {
+            if matches!(&st.pending, Some((Pending::Delete(p), _)) if p == n) {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Delete \"{n}\"?"));
+                    if ui.button("Yes").clicked() {
+                        c.actions.push(Action::PresetDelete(n.clone()));
+                        st.pending = None;
+                    }
+                    if ui.button("No").clicked() {
+                        st.pending = None;
+                    }
+                });
+                continue;
+            }
+            ui.horizontal(|ui| {
+                if ui.add_enabled(has_proc, egui::Button::new("Load")).on_hover_text("Apply to the selected strip").clicked() {
+                    c.actions.push(Action::PresetLoad(n.clone()));
+                    close = true;
+                }
+                if ui.button("Delete").clicked() {
+                    st.pending = Some((Pending::Delete(n.clone()), c.selected));
+                }
+                ui.label(n);
+            });
+        }
+        ui.separator();
+        let strip = format!("{} {}", c.selected.short(), c.st.name(c.selected));
+        if let Some((Pending::Overwrite(n), _)) = st.pending.clone() {
+            ui.horizontal(|ui| {
+                ui.label(format!("Overwrite \"{n}\" with {}?", strip.trim()));
+                if ui.button("Yes").clicked() {
+                    c.actions.push(Action::PresetSave(n));
+                    st.pending = None;
+                    st.name.clear();
+                    close = true;
+                }
+                if ui.button("No").clicked() {
+                    st.pending = None;
+                }
+            });
+        } else {
+            ui.horizontal(|ui| {
+                ui.label("Save as");
+                let r = ui.add(egui::TextEdit::singleline(&mut st.name).desired_width(120.0).char_limit(crate::presets::MAX_NAME));
+                let ok = has_proc && !st.name.trim().is_empty();
+                let go = ui.add_enabled(ok, egui::Button::new("Save")).clicked()
+                    || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && ok);
+                if go {
+                    match crate::presets::find_existing(c.presets, &st.name) {
+                        Some(existing) => st.pending = Some((Pending::Overwrite(existing.clone()), c.selected)),
+                        None => {
+                            c.actions.push(Action::PresetSave(st.name.trim().to_string()));
+                            st.name.clear();
+                            close = true;
+                        }
+                    }
+                }
+            });
+        }
+        if c.preset_undo && ui.button("Undo preset").clicked() {
+            c.actions.push(Action::PresetUndo);
+            close = true;
+        }
+        if close {
+            ui.close();
+        }
+    });
+    st.was_open = r.inner.is_some();
+    if !st.was_open || close {
+        st.pending = None;
+    }
+    ui.data_mut(|d| d.insert_temp(id, st));
 }
 
 impl Ctx<'_> {

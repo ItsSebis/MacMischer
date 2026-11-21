@@ -19,6 +19,19 @@ use crate::connect::{parse_addr, Finder};
 use xair_core::{Mixer, Status};
 use xair_proto::{Param, StripId, Value};
 
+/// Values overwritten by the last preset load (strip and linked partner), for "Undo preset".
+struct PresetUndo {
+    strips: Vec<StripId>,
+    old: crate::ab::Snapshot,
+}
+
+/// A preset load waiting for the user's confirmation.
+struct PendingLoad {
+    strip: StripId,
+    name: String,
+    text: String,
+}
+
 enum Conn {
     Finding(Finder),
     Mixer(Arc<Mixer>),
@@ -43,6 +56,10 @@ pub struct App {
     show_fx: bool,
     history: crate::history::History,
     ab: crate::ab::Ab,
+    presets: Vec<String>,
+    /// Values overwritten by the last preset load (for "Undo preset").
+    preset_undo: Option<PresetUndo>,
+    pending_load: Option<PendingLoad>,
     /// Lock mode: only mutes, solo, navigation and the main fader respond.
     locked: bool,
     /// Short status message (e.g. "Locked").
@@ -72,6 +89,9 @@ impl App {
             show_fx: false,
             history: Default::default(),
             ab: Default::default(),
+            presets: crate::presets::list(&crate::presets::dir()),
+            preset_undo: None,
+            pending_load: None,
             locked: false,
             flash: None,
         };
@@ -101,6 +121,7 @@ impl App {
     fn switch_mixer(&mut self) {
         self.history.clear();
         self.ab.clear();
+        self.preset_undo = None;
         let current = match &self.conn {
             Conn::Mixer(m) => Some(m.addr()),
             Conn::Finding(_) => None,
@@ -192,7 +213,10 @@ impl App {
                 continue;
             }
             match a {
-                Action::Set(p, v) => put(m, &mut self.history, p, v),
+                Action::Set(p, v) => {
+                    invalidate_preset_undo(&mut self.preset_undo, p);
+                    put(m, &mut self.history, p, v)
+                }
                 Action::Select(s) => self.selected = m.state().link_leader(s),
                 Action::SelectPosition(n) => {
                     let shown = m.state().display_strips(&self.session.banks[self.session.bank].strips);
@@ -249,6 +273,7 @@ impl App {
                 Action::RecallScene(i) => {
                     self.history.clear();
                     self.ab.clear();
+                    self.preset_undo = None;
                     m.load_snapshot(i);
                     self.flash = Some((format!("Recalled scene {i}"), Instant::now()));
                 }
@@ -305,8 +330,56 @@ impl App {
                     // Not recorded in undo: the A/B slots already make a swap reversible, and
                     // undoing single values would desync the active slot.
                     for (p, v) in writes {
+                        invalidate_preset_undo(&mut self.preset_undo, p);
                         m.set(p, v);
                     }
+                }
+                Action::PresetSave(name) => {
+                    let st = m.state();
+                    let captured = crate::presets::capture(s, |p| st.get(p).cloned());
+                    drop(st);
+                    let msg = match captured {
+                        None => "Preset: nothing to save (no processing, or mixer still syncing)".to_string(),
+                        Some(pr) => match crate::presets::save(&crate::presets::dir(), &name, &pr) {
+                            Ok(n) => format!("Saved preset \"{n}\""),
+                            Err(e) => e,
+                        },
+                    };
+                    self.presets = crate::presets::list(&crate::presets::dir());
+                    self.flash = Some((msg, Instant::now()));
+                }
+                Action::PresetLoad(name) => {
+                    let msg = load_preset(m, s, &name, false, self.session.prefs.safe_mode, &mut self.preset_undo, &mut self.pending_load);
+                    if let Some(msg) = msg {
+                        self.flash = Some((msg, Instant::now()));
+                    }
+                }
+                Action::PresetLoadConfirmed(name) => {
+                    let msg = load_preset(m, s, &name, true, false, &mut self.preset_undo, &mut self.pending_load);
+                    if let Some(msg) = msg {
+                        self.flash = Some((msg, Instant::now()));
+                    }
+                }
+                Action::PresetRefresh => self.presets = crate::presets::list(&crate::presets::dir()),
+                Action::PresetDelete(name) => {
+                    let msg = match crate::presets::delete(&crate::presets::dir(), &name) {
+                        Ok(()) => format!("Deleted preset \"{name}\""),
+                        Err(e) => format!("Cannot delete preset: {e}"),
+                    };
+                    self.presets = crate::presets::list(&crate::presets::dir());
+                    self.flash = Some((msg, Instant::now()));
+                }
+                Action::PresetUndo => {
+                    let msg = match self.preset_undo.take() {
+                        Some(u) => {
+                            for (p, v) in u.old {
+                                m.set(p, v);
+                            }
+                            "Undid preset load".to_string()
+                        }
+                        None => "No preset to undo".to_string(),
+                    };
+                    self.flash = Some((msg, Instant::now()));
                 }
                 Action::SetView(v) => self.view = v,
             }
@@ -364,6 +437,78 @@ impl App {
             });
         });
     }
+}
+
+/// A later edit of a strip's processing (or a link change) makes the stored old values stale.
+fn invalidate_preset_undo(undo: &mut Option<PresetUndo>, p: Param) {
+    let stale = match p {
+        Param::Proc(x, _) => undo.as_ref().is_some_and(|u| u.strips.contains(&x)),
+        Param::ChLink(_) | Param::BusLink(_) => true,
+        _ => false,
+    };
+    if stale {
+        *undo = None;
+    }
+}
+
+/// Load preset `name` onto `s`. Returns a flash message, or `None` when a confirmation prompt
+/// was queued instead.
+fn load_preset(
+    m: &Mixer,
+    s: StripId,
+    name: &str,
+    confirmed: bool,
+    safe: bool,
+    undo: &mut Option<PresetUndo>,
+    pending: &mut Option<PendingLoad>,
+) -> Option<String> {
+    let pr = match crate::presets::load(&crate::presets::dir(), name) {
+        Ok(p) => p,
+        Err(e) => return Some(e),
+    };
+    let pl = crate::presets::plan(&pr, s);
+    if pl.writes.is_empty() {
+        return Some("Preset has nothing for this strip".into());
+    }
+    let mismatch = crate::presets::needs_confirm(&pr, &pl, s);
+    let target = {
+        let st = m.state();
+        format!("{} {}", s.short(), st.name(s)).trim().to_string()
+    };
+    if !confirmed && (mismatch || safe) {
+        let mut text = format!("Load \"{name}\" onto {target}?");
+        if mismatch {
+            let kind = if pr.kind.is_empty() { "unknown" } else { pr.kind.as_str() };
+            text += &format!("\nSaved from: {kind}; {} parameter(s) do not fit and will be skipped.", pl.skipped);
+        }
+        *pending = Some(PendingLoad { strip: s, name: name.to_string(), text });
+        return None;
+    }
+    *pending = None;
+    let st = m.state();
+    // The linked partner follows the leader on the mixer; remember its old values too.
+    let partner = st.linked_partner(s);
+    let mut old: crate::ab::Snapshot = Vec::new();
+    for x in std::iter::once(s).chain(partner) {
+        for (p, _) in &pl.writes {
+            if let Param::Proc(_, pr) = p {
+                let q = Param::Proc(x, *pr);
+                if let Some(v) = st.get(q).cloned() {
+                    old.push((q, v));
+                }
+            }
+        }
+    }
+    drop(st);
+    if old.len() < pl.writes.len() * (1 + usize::from(partner.is_some())) {
+        return Some("Preset: mixer still syncing".into());
+    }
+    // Direct writes (not `put`): one "Undo preset" instead of ~50 history steps.
+    for (p, v) in &pl.writes {
+        m.set(*p, v.clone());
+    }
+    *undo = Some(PresetUndo { strips: std::iter::once(s).chain(partner).collect(), old });
+    Some(format!("Loaded \"{name}\" onto {target}: {} applied, {} skipped", pl.writes.len(), pl.skipped))
 }
 
 /// Set a parameter, remembering its previous value for undo.
@@ -442,6 +587,8 @@ impl eframe::App for App {
             actions: &mut actions,
             view: self.view,
             ab: self.ab.active(self.selected),
+            presets: &self.presets,
+            preset_undo: self.preset_undo.as_ref().is_some_and(|u| u.strips.contains(&self.selected)),
         };
 
         egui::Panel::top("status").show(ui, |ui| {
@@ -556,6 +703,28 @@ impl eframe::App for App {
         });
         let names: HashMap<StripId, String> = StripId::all().into_iter().map(|s| (s, st.name(s))).collect();
         let st_for_windows = st;
+        if self.pending_load.as_ref().is_some_and(|p| p.strip != self.selected) {
+            self.pending_load = None;
+        }
+        if let Some(pl) = &self.pending_load {
+            let mut answer = None;
+            egui::Window::new("Load preset").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(&ctx, |ui| {
+                ui.label(&pl.text);
+                ui.horizontal(|ui| {
+                    if ui.button("Load").clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+            match answer {
+                Some(true) => actions.push(Action::PresetLoadConfirmed(pl.name.clone())),
+                Some(false) => self.pending_load = None,
+                None => {}
+            }
+        }
         self.scenes.window(&ctx, st_for_windows, self.session.prefs.safe_mode, &mut actions);
         crate::routing_view::routing_window(&ctx, &mut self.show_routing, st_for_windows, self.locked, &mut actions);
         crate::fx_view::fx_window(&ctx, &mut self.show_fx, st_for_windows, self.locked, &mut actions);

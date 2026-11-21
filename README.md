@@ -33,6 +33,7 @@ The icon source is `assets/icon/icon.svg`; regenerate PNGs with `cargo run -p ic
 | `b` | A/B compare: stores the selected strip's HPF/EQ/gate/comp as A and B on first press, then toggles (undoable; cleared on mixer switch; blocked when locked) |
 | `[` `]`, F1–F12 | switch fader bank |
 | Ctrl/Cmd+K / R / F / L | scenes / routing / effects / lock |
+| (EQ / dynamics view) **Presets** menu | save the selected strip's HPF/EQ/gate/comp as a named preset (TOML in `<config>/MacMischer/presets/`), load it onto any strip (only parameters that exist there are applied; the message shows applied/skipped; key-source selections and polarity are not stored; values are range-checked), delete, or "Undo preset" (also restores the linked partner; dropped by later edits of that strip); loading asks first in Safe mode or whenever the preset comes from another strip family or has skipped parameters; overwriting an existing name asks first; blocked when locked |
 | Ctrl/Cmd+Z / Y | undo / redo your last edits (fader drags count as one step; cleared on scene recall) |
 | `?` | help |
 
