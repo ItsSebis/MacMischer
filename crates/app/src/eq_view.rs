@@ -11,9 +11,11 @@ use crate::widgets;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use xair_proto::proc::{self, EqField, Proc};
 use xair_proto::scale::{self, fmt_hz};
-use xair_proto::{Param, StripId, Value};
+use xair_proto::{meters, Param, StripId, Value};
 
 const DB_RANGE: f32 = 18.0;
+/// RTA overlay spans -100..0 dB over the graph height.
+const RTA_RANGE_DB: f32 = 100.0;
 const BAND_COLORS: [Color32; 6] = [
     Color32::from_rgb(0xff, 0x8a, 0x3d),
     Color32::from_rgb(0xf2, 0xc9, 0x4c),
@@ -72,6 +74,20 @@ pub fn eq_view(ui: &mut Ui, c: &mut Ctx, s: StripId) {
             ui.set_width(70.0);
             if widgets::toggle(ui, Vec2::new(64.0, 26.0), "EQ", eq_on, theme::OK).clicked() {
                 set_int(c, s, Proc::EqOn, !eq_on as i32);
+            }
+            ui.add_space(6.0);
+            c.rta_shown = true;
+            let rta_on = *c.rta_on;
+            if widgets::toggle(ui, Vec2::new(64.0, 26.0), "RTA", rta_on, theme::WARN)
+                .on_hover_text(
+                    "Real-time spectrum (mixer /meters/4) behind the curve, -100..0 dB.\n\
+                     A flat line at the bottom may mean the mixer's RTA is inactive.\n\
+                     Display only. Layout/band centres are UNVERIFIED (assumed 100 log bands 20 Hz-20 kHz);\n\
+                     analysed source is whatever the mixer's RTA is set to.",
+                )
+                .clicked()
+            {
+                *c.rta_on = !rta_on;
             }
             if let Some((on, hz)) = hpf {
                 ui.add_space(6.0);
@@ -153,6 +169,38 @@ fn graph(ui: &mut Ui, c: &mut Ctx, s: StripId, rect: Rect, bands: &[Band], eq_on
         let st = if db == 0.0 { Stroke::new(1.0, theme::DIM.linear_multiply(0.7)) } else { grid };
         p.line_segment([Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)], st);
         p.text(Pos2::new(rect.left() + 2.0, y - 1.0), Align2::LEFT_BOTTOM, format!("{db:+}"), FontId::proportional(9.0), theme::DIM);
+    }
+
+    // RTA spectrum (UNVERIFIED layout): faint filled area behind the curves.
+    // Band i sits at its assumed log-spaced centre frequency; -RTA_RANGE_DB..0 dB maps to the
+    // full graph height (bottom..top).
+    if *c.rta_on {
+        let fresh = c.meters.rta.len() >= meters::RTA_BANDS
+            && c.meters.rta_updated.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(500));
+        if fresh {
+            let h = rect.height();
+            let fill = theme::WARN.linear_multiply(0.16);
+            let mut mesh = egui::Mesh::default();
+            let mut pts: Vec<Pos2> = Vec::with_capacity(meters::RTA_BANDS);
+            for (i, &db) in c.meters.rta.iter().take(meters::RTA_BANDS).enumerate() {
+                let k = ((db + RTA_RANGE_DB) / RTA_RANGE_DB).clamp(0.0, 1.0);
+                let x = fx(meters::rta_band_hz(i));
+                let top = Pos2::new(x, rect.bottom() - k * h);
+                pts.push(top);
+                // Triangle strip: (top, bottom) vertex pair per band.
+                mesh.colored_vertex(top, fill);
+                mesh.colored_vertex(Pos2::new(x, rect.bottom()), fill);
+                if i > 0 {
+                    let v = 2 * i as u32;
+                    mesh.add_triangle(v - 2, v - 1, v);
+                    mesh.add_triangle(v - 1, v + 1, v);
+                }
+            }
+            p.add(egui::Shape::mesh(mesh));
+            p.add(egui::Shape::line(pts, Stroke::new(1.0, theme::WARN.linear_multiply(0.4))));
+        } else {
+            p.text(rect.left_top() + Vec2::new(30.0, 4.0), Align2::LEFT_TOP, "no RTA data", FontId::proportional(10.0), theme::WARN);
+        }
     }
 
     // Curves: individual bands faint, sum bright.

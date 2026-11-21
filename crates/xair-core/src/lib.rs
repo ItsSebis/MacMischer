@@ -14,7 +14,7 @@ pub use state::{Meters, MixerInfo, MixerState, Status};
 use conn::Cmd;
 use crossbeam_channel::Sender;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::thread::JoinHandle;
 use xair_proto::{Param, Value};
@@ -25,6 +25,8 @@ pub(crate) struct Shared {
     pub status: Mutex<Status>,
     /// Incremented on every parameter change (cheap change detection for the UI).
     pub version: AtomicU64,
+    /// Last value sent via `Mixer::set_rta_wanted` (to send commands only on change).
+    rta_wanted: AtomicBool,
     repaint: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
@@ -58,6 +60,7 @@ impl Mixer {
             meters: Mutex::new(Meters::default()),
             status: Mutex::new(Status::Connecting),
             version: AtomicU64::new(0),
+            rta_wanted: AtomicBool::new(false),
             repaint: Mutex::new(None),
         });
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -117,6 +120,16 @@ impl Mixer {
     /// Send an arbitrary OSC message (e.g. `/-snap/load`).
     pub fn send_raw(&self, path: &str, args: Vec<Value>) {
         let _ = self.tx.send(Cmd::Raw(path.into(), args));
+    }
+
+    /// Subscribe to / unsubscribe from the RTA spectrum (`/meters/4`). Off by default: not
+    /// subscribed unless wanted. Turning it off sends no unsubscribe; renewals just stop, so the
+    /// mixer stops streaming when the subscription lapses (~10 s) and the client discards the
+    /// data meanwhile. Cheap to call every frame.
+    pub fn set_rta_wanted(&self, on: bool) {
+        if self.shared.rta_wanted.swap(on, Ordering::Relaxed) != on {
+            let _ = self.tx.send(Cmd::Rta(on));
+        }
     }
 
     /// Re-read the full state (e.g. after a snapshot recall).

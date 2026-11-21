@@ -25,6 +25,10 @@ pub struct Ctx<'a> {
     pub presets: &'a [String],
     /// An "Undo preset" is available for the selected strip.
     pub preset_undo: bool,
+    /// RTA overlay toggle (owned by the app).
+    pub rta_on: &'a mut bool,
+    /// Set by the EQ view when it was drawn this frame (drives the RTA subscription).
+    pub rta_shown: bool,
 }
 
 /// What the detail panel shows for the selected strip.

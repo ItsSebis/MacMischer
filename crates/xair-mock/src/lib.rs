@@ -21,6 +21,8 @@ struct State {
     values: HashMap<String, Value>,
     remote: HashMap<SocketAddr, Instant>,
     meters: HashMap<(SocketAddr, u8), Instant>,
+    /// Count of `/meters/<bank>` subscribe messages received, per bank.
+    sub_counts: HashMap<u8, usize>,
 }
 
 struct Shared {
@@ -137,7 +139,25 @@ fn is_on(st: &State, p: Param) -> bool {
     st.values.get(&p.path()).and_then(Value::as_i32).unwrap_or(1) != 0
 }
 
+/// Plausible moving spectrum (pink-ish slope with a few drifting peaks), 100 bands.
+fn rta_values(t: f32) -> Vec<f32> {
+    (0..meters::RTA_BANDS)
+        .map(|i| {
+            let x = i as f32 / (meters::RTA_BANDS - 1) as f32;
+            let slope = -30.0 - 40.0 * x;
+            let peak = |c: f32, w: f32| 18.0 * (-((x - c) / w).powi(2)).exp();
+            let c1 = 0.3 + 0.15 * (t * 0.7).sin();
+            let c2 = 0.65 + 0.1 * (t * 1.1).cos();
+            let jitter = 3.0 * (t * 6.0 + i as f32 * 1.7).sin();
+            (slope + peak(c1, 0.06) + peak(c2, 0.05) + jitter).clamp(meters::FLOOR_DB, 0.0)
+        })
+        .collect()
+}
+
 fn meter_values(st: &State, bank: u8, t: f32) -> Vec<f32> {
+    if bank == 4 {
+        return rta_values(t);
+    }
     let n = if bank == 1 { meters::m1::LEN } else { 36 };
     let mut out = vec![meters::FLOOR_DB; n];
     let wobble = |i: usize| 3.0 * (t * 2.0 + i as f32).sin();
@@ -181,8 +201,9 @@ fn handle(shared: &Shared, sock: &UdpSocket, from: SocketAddr, buf: &[u8]) {
                 st.remote.insert(from, now + SUB_TTL);
             }
             ("/meters", [OscType::String(s)]) => {
-                if let Some(b @ (1 | 2)) = s.strip_prefix("/meters/").and_then(|n| n.parse::<u8>().ok()) {
+                if let Some(b @ (1 | 2 | 4)) = s.strip_prefix("/meters/").and_then(|n| n.parse::<u8>().ok()) {
                     st.meters.insert((from, b), now + SUB_TTL);
+                    *st.sub_counts.entry(b).or_default() += 1;
                 }
             }
             ("/-snap/load", [a]) => {
@@ -291,6 +312,11 @@ impl MockMixer {
     /// Number of OSC set messages (with args) received from clients so far.
     pub fn sets_received(&self) -> usize {
         self.shared.sets.load(Ordering::SeqCst)
+    }
+
+    /// Number of `/meters/<bank>` subscribe messages received so far for `bank`.
+    pub fn meter_subscribes(&self, bank: u8) -> usize {
+        self.shared.lock().sub_counts.get(&bank).copied().unwrap_or(0)
     }
 
     /// Stop answering (simulate power-off) / resume.

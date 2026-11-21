@@ -67,6 +67,8 @@ pub struct App {
     presets: Vec<String>,
     /// Values overwritten by the last preset load (for "Undo preset").
     preset_undo: Option<PresetUndo>,
+    /// EQ view RTA overlay toggle (session only, default off).
+    rta_on: bool,
     pending_load: Option<PendingLoad>,
     /// Lock mode: only mutes, solo, navigation and the main fader respond.
     locked: bool,
@@ -105,6 +107,7 @@ impl App {
             ab: Default::default(),
             presets: crate::presets::list(&crate::presets::dir()),
             preset_undo: None,
+            rta_on: false,
             pending_load: None,
             locked: false,
             flash: None,
@@ -136,6 +139,7 @@ impl App {
         self.history.clear();
         self.ab.clear();
         self.preset_undo = None;
+        self.rta_on = false;
         self.midi_engine.reset();
         let current = match &self.conn {
             Conn::Mixer(m) => Some(m.addr()),
@@ -697,6 +701,8 @@ impl eframe::App for App {
             ab: self.ab.active(self.selected),
             presets: &self.presets,
             preset_undo: self.preset_undo.as_ref().is_some_and(|u| u.strips.contains(&self.selected)),
+            rta_on: &mut self.rta_on,
+            rta_shown: false,
         };
 
         egui::Panel::top("status").show(ui, |ui| {
@@ -818,6 +824,8 @@ impl eframe::App for App {
             });
         });
         let names: HashMap<StripId, String> = StripId::all().into_iter().map(|s| (s, st.name(s))).collect();
+        // RTA subscription only while the EQ view is drawn with the toggle on.
+        mixer.set_rta_wanted(*c.rta_on && c.rta_shown);
         let st_for_windows = st;
         if self.pending_load.as_ref().is_some_and(|p| p.strip != self.selected) {
             self.pending_load = None;

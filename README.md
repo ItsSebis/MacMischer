@@ -54,6 +54,9 @@ The icon source is `assets/icon/icon.svg`; regenerate PNGs with `cargo run -p ic
   scene recall over MIDI is refused in Safe mode. Settings live in `prefs.toml` (not the show file);
   a vanished device is re-attached automatically. Build without it: `--no-default-features`
   (Linux needs ALSA headers for the default build). Not tested with real hardware yet.
+- **RTA overlay** (EQ view, "RTA" toggle, off by default): live spectrum from the mixer's `/meters/4` drawn
+  behind the EQ curve (display only, -100..0 dB). Subscribed only while shown (switching off just stops renewing; the mixer stops streaming within ~10 s). The blob layout and band
+  frequencies are unverified against hardware; the analysed source is chosen on the mixer.
 
 ## Layout
 

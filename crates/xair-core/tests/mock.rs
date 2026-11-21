@@ -89,3 +89,26 @@ fn linked_pairs_mirror() {
     assert_eq!(mixer.state().fader(StripId::Ch(4)), 0.5);
     wait_for("partner sent", 2, || mock.get("/ch/04/mix/fader") == Some(Value::Float(0.5)));
 }
+
+#[test]
+fn rta_only_while_wanted() {
+    let mock = MockMixer::start();
+    let mixer = Mixer::connect_with(mock.addr(), fast());
+    wait_for("connected", 5, || mixer.status() == Status::Connected);
+    wait_for("meters flowing", 3, || mixer.meters().updated.is_some());
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(mixer.meters().rta.is_empty(), "no RTA before it is wanted");
+    assert!(mock.meter_subscribes(1) > 0);
+    assert_eq!(mock.meter_subscribes(4), 0, "bank 4 not subscribed before it is wanted");
+    mixer.set_rta_wanted(true);
+    wait_for("rta", 3, || mixer.meters().rta.len() == 100);
+    assert!(mock.meter_subscribes(4) > 0);
+    assert!(mixer.meters().rta_updated.is_some());
+    mixer.set_rta_wanted(false);
+    assert!(mixer.meters().rta.is_empty() || {
+        std::thread::sleep(Duration::from_millis(100));
+        mixer.meters().rta.is_empty()
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(mixer.meters().rta.is_empty(), "stragglers ignored after off");
+}

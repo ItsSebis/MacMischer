@@ -162,6 +162,10 @@ pub struct Meters {
     /// `/meters/2`: 18 input (pre) + 18 USB return levels.
     pub m2: Vec<f32>,
     pub updated: Option<Instant>,
+    /// `/meters/4` RTA spectrum (100 dB values, UNVERIFIED layout); empty unless the RTA is
+    /// wanted (see `Mixer::set_rta_wanted`) and a blob has arrived.
+    pub rta: Vec<f32>,
+    pub rta_updated: Option<Instant>,
 }
 
 impl Default for Meters {
@@ -170,6 +174,8 @@ impl Default for Meters {
             m1: vec![meters::FLOOR_DB; meters::m1::LEN],
             m2: vec![meters::FLOOR_DB; 36],
             updated: None,
+            rta: Vec::new(),
+            rta_updated: None,
         }
     }
 }

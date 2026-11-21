@@ -14,6 +14,7 @@ pub(crate) enum Cmd {
     Set(Param, Value),
     Raw(String, Vec<Value>),
     Resync,
+    Rta(bool),
     Shutdown,
 }
 
@@ -59,6 +60,7 @@ struct Conn {
     /// In flight: param -> (last sent, retries).
     sync_waiting: HashMap<Param, (Instant, u32)>,
     sync_total: usize,
+    rta_wanted: bool,
 }
 
 pub(crate) fn run(to: SocketAddr, shared: Arc<Shared>, rx: Receiver<Cmd>, timing: Timing) {
@@ -85,6 +87,7 @@ pub(crate) fn run(to: SocketAddr, shared: Arc<Shared>, rx: Receiver<Cmd>, timing
         sync_queue: Vec::new(),
         sync_waiting: HashMap::new(),
         sync_total: 0,
+        rta_wanted: false,
     };
     c.set_status(Status::Connecting);
     let mut buf = vec![0u8; 8192];
@@ -99,6 +102,7 @@ pub(crate) fn run(to: SocketAddr, shared: Arc<Shared>, rx: Receiver<Cmd>, timing
                     c.send(&osc::encode(&path, args));
                 }
                 Ok(Cmd::Resync) => c.start_sync(),
+                Ok(Cmd::Rta(on)) => c.set_rta(on),
                 Ok(Cmd::Shutdown) | Err(TryRecvError::Disconnected) => return,
                 Err(TryRecvError::Empty) => break,
             }
@@ -119,6 +123,23 @@ impl Conn {
     fn send(&self, bytes: &[u8]) {
         if let Err(e) = self.sock.send_to(bytes, self.to) {
             tracing::debug!("send failed: {e}");
+        }
+    }
+
+    fn subscribe(&self, bank: &str) {
+        self.send(&osc::encode("/meters", vec![OscType::String(format!("/meters/{bank}"))]));
+    }
+
+    fn set_rta(&mut self, on: bool) {
+        self.rta_wanted = on;
+        if on {
+            if self.connected {
+                self.subscribe("4");
+            }
+        } else {
+            let mut mt = self.shared.meters.lock().unwrap();
+            mt.rta.clear();
+            mt.rta_updated = None;
         }
     }
 
@@ -154,7 +175,18 @@ impl Conn {
         }
         if let Some(n) = m.addr.strip_prefix("/meters/") {
             if let Some(OscType::Blob(b)) = m.args.first() {
-                if let Some(vals) = meters::parse(b) {
+                if n == "4" {
+                    // Ignore stragglers after the RTA was switched off.
+                    if self.rta_wanted {
+                        if let Some(vals) = meters::parse_rta(b) {
+                            let mut mt = self.shared.meters.lock().unwrap();
+                            mt.rta = vals;
+                            mt.rta_updated = Some(Instant::now());
+                            drop(mt);
+                            self.shared.repaint();
+                        }
+                    }
+                } else if let Some(vals) = meters::parse(b) {
                     let mut mt = self.shared.meters.lock().unwrap();
                     match n {
                         "1" => mt.m1 = vals,
@@ -213,8 +245,11 @@ impl Conn {
         }
         if self.last_keepalive.is_none_or(|t| now - t >= self.timing.keepalive) {
             self.send(&osc::encode("/xremote", vec![]));
-            for m in ["/meters/1", "/meters/2"] {
-                self.send(&osc::encode("/meters", vec![OscType::String(m.into())]));
+            for m in ["1", "2"] {
+                self.subscribe(m);
+            }
+            if self.rta_wanted {
+                self.subscribe("4");
             }
             self.last_keepalive = Some(now);
         }
