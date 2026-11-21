@@ -66,6 +66,7 @@ impl Default for Keymap {
             (Binding::Key(Key::Z, CMD), Undo),
             (Binding::Key(Key::Y, CMD), Redo),
             (Binding::Key(Key::P, CMD), OpenRemote),
+            (Binding::Key(Key::M, CMD), OpenMidi),
             (Binding::Char('['), BankStep(-1)),
             (Binding::Char(']'), BankStep(1)),
         ];
@@ -109,6 +110,7 @@ impl Keymap {
             ("Ctrl/Cmd+K", "scenes"),
             ("Ctrl/Cmd+R", "routing"),
             ("Ctrl/Cmd+P", "web remote (phones / tablets)"),
+            ("Ctrl/Cmd+M", "MIDI controller settings (bindings, learn)"),
             ("Ctrl/Cmd+L", "lock / unlock (only mutes + main fader work)"),
             ("Esc", "cancel number entry"),
             ("?", "show / hide this help"),

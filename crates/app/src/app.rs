@@ -51,6 +51,14 @@ pub struct App {
     scenes: ScenesUi,
     remote: xair_remote::Remote,
     show_remote: bool,
+    midi: crate::midi::MidiService,
+    midi_engine: crate::midi::Engine,
+    midi_ui: crate::midi_view::MidiUi,
+    midi_hold: Option<crate::midi::Hold>,
+    /// What the MIDI mapping last saw; a change re-arms soft takeover.
+    midi_sig: Option<(crate::midi::MidiStatus, bool, Option<String>, Vec<crate::midi::Binding>)>,
+    /// Last scene recall: fader/pan MIDI is ignored while the mixer re-reads its state.
+    recall_at: Option<Instant>,
     view: views::DetailView,
     show_routing: bool,
     show_fx: bool,
@@ -71,7 +79,7 @@ impl App {
         let session = Session::load();
         let remembered = session.prefs.last_mixer.as_deref().and_then(parse_addr);
         let mut app = App {
-            ctx,
+            ctx: ctx.clone(),
             conn: Conn::Finding(Finder::new(remembered, true)),
             _mock: None,
             selected: StripId::Ch(1),
@@ -84,6 +92,12 @@ impl App {
             scenes: ScenesUi::default(),
             remote: xair_remote::Remote::new(),
             show_remote: false,
+            midi: crate::midi::MidiService::new(ctx.clone()),
+            midi_engine: Default::default(),
+            midi_ui: Default::default(),
+            midi_hold: None,
+            midi_sig: None,
+            recall_at: None,
             view: views::DetailView::Mix,
             show_routing: false,
             show_fx: false,
@@ -122,6 +136,7 @@ impl App {
         self.history.clear();
         self.ab.clear();
         self.preset_undo = None;
+        self.midi_engine.reset();
         let current = match &self.conn {
             Conn::Mixer(m) => Some(m.addr()),
             Conn::Finding(_) => None,
@@ -271,6 +286,8 @@ impl App {
                 }
                 Action::SetSolo(s, on) => set_solo(m, s, on),
                 Action::RecallScene(i) => {
+                    self.recall_at = Some(Instant::now());
+                    self.midi_engine.reset();
                     self.history.clear();
                     self.ab.clear();
                     self.preset_undo = None;
@@ -306,6 +323,7 @@ impl App {
                 }
                 Action::OpenFx => self.show_fx = !self.show_fx,
                 Action::OpenRemote => self.show_remote = !self.show_remote,
+                Action::OpenMidi => self.midi_ui.open = !self.midi_ui.open,
                 Action::AbToggle | Action::AbSelect(_) => {
                     let params = xair_proto::param::proc_params(s);
                     if params.is_empty() {
@@ -384,6 +402,65 @@ impl App {
                 Action::SetView(v) => self.view = v,
             }
         }
+    }
+
+    /// Handle MIDI messages: feed an active Learn, otherwise map them to actions.
+    /// Returns true when the bindings changed (prefs need saving).
+    fn midi_input(&mut self, msgs: Vec<crate::midi::MidiMsg>, actions: &mut Vec<Action>) -> bool {
+        use crate::midi::{hold_suppresses, learn, Hold, LearnOutcome};
+        // Re-arm soft takeover whenever the situation changes (device, bindings, caps, enable).
+        let m = &self.session.prefs.midi;
+        let sig = (self.midi.status(), m.enabled, m.device.clone(), m.bindings.clone());
+        if self.midi_sig.as_ref() != Some(&sig) {
+            self.midi_engine.reset();
+            self.midi_sig = Some(sig);
+        }
+        let Conn::Mixer(m) = &self.conn else { return false };
+        let now = Instant::now();
+        let mut changed = false;
+        let mut pending = Vec::new();
+        for msg in msgs {
+            self.midi_ui.last_msg = Some(msg);
+            if let Some(req) = self.midi_ui.learning {
+                match learn(&mut self.session.prefs.midi.bindings, &req, msg) {
+                    // Not usable for learning: handle normally.
+                    LearnOutcome::Ignored => {}
+                    LearnOutcome::Bound(_) => {
+                        self.midi_ui.learning = None;
+                        self.midi_ui.note = Some(format!("Bound {}", msg.describe()));
+                        self.midi_hold = Some(Hold { key: msg.key(), at: now });
+                        changed = true;
+                        continue;
+                    }
+                    LearnOutcome::Taken(text) => {
+                        self.midi_ui.note = Some(text);
+                        continue;
+                    }
+                }
+            }
+            if !hold_suppresses(&mut self.midi_hold, msg, now) {
+                pending.push(msg);
+            }
+        }
+        if pending.is_empty() {
+            return changed;
+        }
+        let resyncing = !matches!(m.status(), Status::Connected)
+            || self.recall_at.is_some_and(|t| t.elapsed() < Duration::from_millis(600));
+        let st = m.state();
+        let view = MixerView { st: &st };
+        let (acts, errors) = self.midi_engine.process(
+            &self.session.prefs.midi.bindings,
+            &pending,
+            &view,
+            self.session.prefs.safe_mode,
+            resyncing,
+        );
+        actions.extend(acts);
+        if let Some(text) = errors.into_iter().next() {
+            self.flash = Some((text, Instant::now()));
+        }
+        changed
     }
 
     fn bank_tabs(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
@@ -526,6 +603,32 @@ fn set_solo(m: &Mixer, s: StripId, on: bool) {
     }
 }
 
+/// Mixer state as seen by the MIDI mapping.
+struct MixerView<'a> {
+    st: &'a xair_core::MixerState,
+}
+
+impl crate::midi::View for MixerView<'_> {
+    fn fader(&self, s: StripId) -> Option<f32> {
+        self.st.get(Param::Fader(s)).and_then(Value::as_f32)
+    }
+    fn pan(&self, s: StripId) -> Option<f32> {
+        self.st.get(Param::Pan(s)).and_then(Value::as_f32)
+    }
+    fn muted(&self, s: StripId) -> Option<bool> {
+        self.st.get(Param::On(s)).and_then(Value::as_i32).map(|v| v == 0)
+    }
+    fn soloed(&self, s: StripId) -> Option<bool> {
+        self.st.get(Param::Solo(s.solo_index())).and_then(Value::as_i32).map(|v| v != 0)
+    }
+    fn partner(&self, s: StripId) -> Option<StripId> {
+        self.st.linked_partner(s)
+    }
+    fn scene_name(&self, n: u8) -> String {
+        self.st.snap_name(n)
+    }
+}
+
 fn entry_action(e: Entry) -> Action {
     match e {
         Entry::Select(s) => Action::Select(s),
@@ -558,6 +661,11 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        {
+            let m = &self.session.prefs.midi;
+            self.midi.configure(m.enabled, m.device.as_deref(), self.midi_ui.open);
+        }
+        let midi_msgs = self.midi.drain();
         if let Conn::Finding(f) = &mut self.conn {
             if let Some(addr) = f.ui(ui) {
                 self.connect(addr);
@@ -567,11 +675,11 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         let mut actions = Vec::new();
         self.keyboard(&ctx, &mut actions);
+        let mut prefs_changed = self.midi_input(midi_msgs, &mut actions);
         // Tabs need &mut self; render them before borrowing mixer state.
         egui::Panel::bottom("banks").exact_size(40.0).show(ui, |ui| self.bank_tabs(ui, &mut actions));
 
         let mut switch = false;
-        let mut prefs_changed = false;
         let locked = self.locked;
         let Conn::Mixer(mixer) = &self.conn else { unreachable!() };
         let status = mixer.status();
@@ -642,6 +750,14 @@ impl eframe::App for App {
                     };
                     if ui.button(rtxt).on_hover_text("Web remote for phones/tablets (Ctrl/Cmd+P)").clicked() {
                         c.actions.push(Action::OpenRemote);
+                    }
+                    let mtxt = match (self.session.prefs.midi.enabled, self.midi.status()) {
+                        (true, crate::midi::MidiStatus::Connected(_)) => egui::RichText::new("MIDI").color(theme::OK),
+                        (true, _) => egui::RichText::new("MIDI").color(theme::WARN),
+                        (false, _) => egui::RichText::new("MIDI"),
+                    };
+                    if ui.button(mtxt).on_hover_text("MIDI controller (Ctrl/Cmd+M)").clicked() {
+                        c.actions.push(Action::OpenMidi);
                     }
                     if ui.button("FX").on_hover_text("Effects rack (Ctrl/Cmd+F)").clicked() {
                         c.actions.push(Action::OpenFx);
@@ -741,6 +857,14 @@ impl eframe::App for App {
                 &names,
             );
         }
+        prefs_changed |= crate::midi_view::midi_window(
+            &ctx,
+            &mut self.midi_ui,
+            &mut self.session.prefs.midi,
+            &self.midi,
+            &names,
+            self.session.prefs.safe_mode,
+        );
         drop(st_guard);
 
         if let Some(ed) = &mut self.editor {

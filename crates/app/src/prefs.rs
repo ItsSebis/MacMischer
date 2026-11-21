@@ -15,6 +15,9 @@ pub struct Prefs {
     pub recent_shows: Vec<PathBuf>,
     /// Safe mode: scene recall needs confirmation (Simple mode when false).
     pub safe_mode: bool,
+    /// MIDI input: enabled, device and bindings (not part of the show file).
+    #[serde(deserialize_with = "crate::midi::lenient_prefs")]
+    pub midi: crate::midi::MidiPrefs,
 }
 
 impl Prefs {

@@ -47,6 +47,13 @@ The icon source is `assets/icon/icon.svg`; regenerate PNGs with `cargo run -p ic
   own monitor mix (page bound to a bus) or a capped TV-room volume. Scan the QR code; optional PIN;
   "Add to Home Screen" for a full-screen app. Try it without hardware:
   `cargo run -p xair-remote --example serve_mock` → http://localhost:8019/. Protocol: docs/REMOTE.md.
+- **MIDI** (Ctrl/Cmd+M, toolbar "MIDI"): a hardware controller drives faders, pans, mute, solo, strip
+  select and scene recall. Pick the device, choose a target, press *Learn* and move a control.
+  CC faders/pans use soft takeover (move past the current position first; fader CC 95 is about unity;
+  default cap +6 dB per fader). Notes toggle mute/solo, CCs set them (>= 64 = on). Lock applies to MIDI;
+  scene recall over MIDI is refused in Safe mode. Settings live in `prefs.toml` (not the show file);
+  a vanished device is re-attached automatically. Build without it: `--no-default-features`
+  (Linux needs ALSA headers for the default build). Not tested with real hardware yet.
 
 ## Layout
 

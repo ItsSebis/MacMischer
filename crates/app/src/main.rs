@@ -16,6 +16,8 @@ mod fx_view;
 mod history;
 mod input;
 mod keymap;
+mod midi;
+mod midi_view;
 mod prefs;
 mod scenes;
 mod remote_view;
