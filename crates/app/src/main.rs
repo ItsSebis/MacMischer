@@ -10,6 +10,7 @@ mod connect;
 mod dyn_view;
 mod eq_view;
 mod eqmath;
+mod fx_view;
 mod input;
 mod keymap;
 mod prefs;

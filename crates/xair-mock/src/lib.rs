@@ -81,6 +81,8 @@ fn default_for(p: Param) -> Value {
             _ => 0,
         }),
         Param::Proc(s, p) => proc_default(s, p),
+        Param::FxType(n) => Value::Int(n as i32 - 1),
+        Param::FxPar(..) => Value::Float(0.5),
         Param::SnapIndex => Value::Int(1),
         Param::SnapName(1) => Value::Str("Home".into()),
         Param::SnapName(_) => Value::Str(String::new()),

@@ -121,7 +121,14 @@ pub enum Param {
     RoutePos(Output),
     /// channel processing (HPF, EQ, gate, compressor); see `proc`
     Proc(StripId, Proc),
+    /// int effect type code of FX slot 1..4 (type names/order not hardware-verified, see PROTOCOL.md)
+    FxType(u8),
+    /// float 0..1 raw effect parameter `par` (1..=FX_PARAMS) of FX slot 1..4; meaning depends on type
+    FxPar(u8, u8),
 }
+
+/// Effect parameters mirrored per FX slot (the mixer has up to 64; most effects use far fewer).
+pub const FX_PARAMS: u8 = 32;
 
 impl Param {
     pub fn path(self) -> String {
@@ -153,6 +160,8 @@ impl Param {
             Param::RouteSrc(o) => format!("{}/src", o.prefix()),
             Param::RoutePos(o) => format!("{}/pos", o.prefix()),
             Param::Proc(s, p) => format!("{}{}", s.prefix(), p.suffix()),
+            Param::FxType(n) => format!("/fx/{n}/type"),
+            Param::FxPar(n, i) => format!("/fx/{n}/par/{i:02}"),
         }
     }
 
@@ -202,6 +211,11 @@ impl Param {
             ["", "config", "solo", "level"] => Some(Param::MonitorLevel),
             ["", "config", "chlink", pair] => Some(Param::ChLink(link_pair(pair)?)),
             ["", "config", "buslink", pair] => Some(Param::BusLink(link_pair(pair)?)),
+            ["", "fx", n, "type"] => Some(Param::FxType(fx_slot(n)?)),
+            ["", "fx", n, "par", i] => {
+                let i: u8 = i.parse().ok()?;
+                (1..=FX_PARAMS).contains(&i).then_some(Param::FxPar(fx_slot(n)?, i))
+            }
             ["", "-snap", n, "name"] => Some(Param::SnapName(n.parse().ok()?)),
             ["", "routing", kind, n, leaf] => {
                 let o = Output::parse_prefix(kind, n)?;
@@ -294,6 +308,10 @@ impl Param {
                 }
             }
         }
+        for n in 1..=FX {
+            v.push(Param::FxType(n));
+            v.extend((1..=FX_PARAMS).map(|i| Param::FxPar(n, i)));
+        }
         v.push(Param::SnapIndex);
         for i in 1..=64 {
             v.push(Param::SnapName(i));
@@ -317,6 +335,10 @@ pub fn proc_params(s: StripId) -> Vec<Proc> {
         }
     }
     v
+}
+
+fn fx_slot(s: &str) -> Option<u8> {
+    s.parse().ok().filter(|n| (1..=FX).contains(n))
 }
 
 /// "3-4" → pair 2.
@@ -367,6 +389,15 @@ mod tests {
         assert_eq!(p.path(), "/bus/2/eq/6/q");
         assert_eq!(Param::parse("/ch/03/gate/filter/f"), Some(Param::Proc(StripId::Ch(3), Proc::GateFilterF)));
         assert_eq!(Param::parse("/lr/dyn/ratio"), Some(Param::Proc(StripId::Main, Proc::DynRatio)));
+    }
+
+    #[test]
+    fn fx_paths() {
+        assert_eq!(Param::FxType(2).path(), "/fx/2/type");
+        assert_eq!(Param::FxPar(4, 7).path(), "/fx/4/par/07");
+        assert_eq!(Param::parse("/fx/1/par/32"), Some(Param::FxPar(1, 32)));
+        assert_eq!(Param::parse("/fx/5/type"), None);
+        assert_eq!(Param::parse("/fx/1/par/33"), None);
     }
 
     #[test]

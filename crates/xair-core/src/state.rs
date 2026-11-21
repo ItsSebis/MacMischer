@@ -137,6 +137,12 @@ impl MixerState {
     pub fn proc_value(&self, s: StripId, p: Proc) -> Option<f32> {
         Some(p.scale()?.to_value(self.proc_f(s, p)))
     }
+    pub fn fx_type(&self, slot: u8) -> i32 {
+        self.i(Param::FxType(slot), 0)
+    }
+    pub fn fx_par(&self, slot: u8, par: u8) -> f32 {
+        self.f(Param::FxPar(slot, par), 0.0)
+    }
     pub fn snap_index(&self) -> i32 {
         self.i(Param::SnapIndex, 0)
     }

@@ -40,6 +40,7 @@ pub struct App {
     show_remote: bool,
     view: views::DetailView,
     show_routing: bool,
+    show_fx: bool,
     /// Lock mode: only mutes, solo, navigation and the main fader respond.
     locked: bool,
     /// Short status message (e.g. "Locked").
@@ -66,6 +67,7 @@ impl App {
             show_remote: false,
             view: views::DetailView::Mix,
             show_routing: false,
+            show_fx: false,
             locked: false,
             flash: None,
         };
@@ -248,6 +250,7 @@ impl App {
                 Action::ToggleLock => self.locked = !self.locked,
                 Action::OpenScenes => self.scenes.open = !self.scenes.open,
                 Action::OpenRouting => self.show_routing = !self.show_routing,
+                Action::OpenFx => self.show_fx = !self.show_fx,
                 Action::OpenRemote => self.show_remote = !self.show_remote,
                 Action::SetView(v) => self.view = v,
             }
@@ -429,6 +432,9 @@ impl eframe::App for App {
                     if ui.button(rtxt).on_hover_text("Web remote for phones/tablets (Ctrl/Cmd+P)").clicked() {
                         c.actions.push(Action::OpenRemote);
                     }
+                    if ui.button("FX").on_hover_text("Effects rack (Ctrl/Cmd+F)").clicked() {
+                        c.actions.push(Action::OpenFx);
+                    }
                     if ui.button("Routing").on_hover_text("Ctrl/Cmd+R").clicked() {
                         c.actions.push(Action::OpenRouting);
                     }
@@ -488,6 +494,7 @@ impl eframe::App for App {
         let st_for_windows = st;
         self.scenes.window(&ctx, st_for_windows, self.session.prefs.safe_mode, &mut actions);
         crate::routing_view::routing_window(&ctx, &mut self.show_routing, st_for_windows, self.locked, &mut actions);
+        crate::fx_view::fx_window(&ctx, &mut self.show_fx, st_for_windows, self.locked, &mut actions);
         {
             let (status, clients) = (self.remote.status(), self.remote.clients());
             crate::remote_view::remote_window(
