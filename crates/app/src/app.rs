@@ -356,6 +356,10 @@ impl App {
                 if ui.button("Later").clicked() {
                     self.updater.later();
                 }
+                if ui.button("Skip this version").clicked() {
+                    self.updater.skip_this_version();
+                    self.session.prefs.updates = self.updater.prefs().clone();
+                }
             });
             if !notes.trim().is_empty() {
                 egui::ScrollArea::vertical().max_height(80.0).id_salt("update_notes").show(ui, |ui| {
@@ -454,6 +458,12 @@ impl eframe::App for App {
                     ui.selectable_value(safe, false, "Simple").on_hover_text("No confirmations");
                     if *safe != before {
                         prefs_changed = true;
+                    }
+                    ui.separator();
+                    let mut check = self.updater.prefs().check_at_launch;
+                    if ui.checkbox(&mut check, "Check for updates at launch").clicked() {
+                        self.updater.set_check_at_launch(check);
+                        self.session.prefs.updates = self.updater.prefs().clone();
                     }
                     ui.separator();
                     let clients = self.remote.clients();
