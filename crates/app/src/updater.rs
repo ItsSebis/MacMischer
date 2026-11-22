@@ -2,7 +2,7 @@
 //! An Update is not an Action; this module is independent of the Console and the mixer.
 
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 
@@ -21,6 +21,25 @@ pub trait Browser: Send + Sync {
 /// Fetches the Release's DMG bytes (about 6 MB). The error string is shown to the Operator.
 pub trait DmgSource: Send + Sync {
     fn download(&self, url: &str) -> Result<Vec<u8>, String>;
+}
+
+/// The macOS built-ins the install step relies on, plus the file moves around them. Production
+/// uses `hdiutil`, `ditto`, `xattr` and `open`; tests fake the mount and run the moves on a temp
+/// directory.
+pub trait Installer: Send + Sync {
+    /// Mount the DMG; returns the folder holding its contents.
+    fn mount(&self, dmg: &Path) -> Result<PathBuf, String>;
+    /// Unmount; best effort.
+    fn unmount(&self, mount: &Path);
+    /// Copy a bundle (preserving everything inside it).
+    fn copy(&self, from: &Path, to: &Path) -> Result<(), String>;
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), String>;
+    /// Remove a bundle (or any folder).
+    fn remove(&self, path: &Path) -> Result<(), String>;
+    fn strip_quarantine(&self, path: &Path) -> Result<(), String>;
+    /// Start the bundle as a new instance.
+    fn relaunch(&self, path: &Path) -> Result<(), String>;
+    fn volume_read_only(&self, path: &Path) -> bool;
 }
 
 /// A Release that meets the contract in `docs/RELEASING.md` and can be installed.
@@ -47,7 +66,11 @@ pub enum State {
     Verifying(Update),
     /// The DMG is on disk and its digest matched. Installing builds on this.
     Ready { update: Update, dmg: PathBuf },
-    /// Download or verification failed; Try again is `update_now()`.
+    /// The verified DMG is being installed over the running app.
+    Installing(Update),
+    /// The new bundle is in place and started; the app should quit now.
+    Relaunching(Update),
+    /// Download, verification or install failed; Try again is `update_now()`.
     Failed { update: Update, error: String },
 }
 
@@ -65,6 +88,15 @@ impl Default for UpdatePrefs {
     fn default() -> Self {
         UpdatePrefs { check_at_launch: true, skipped_version: None }
     }
+}
+
+/// Whether and how the Updater can replace the running app.
+enum Install {
+    /// No install step configured: a verified download stays `Ready`.
+    Unwired,
+    /// In-place install is impossible here: announcements offer Open release page only.
+    Degraded,
+    Possible { target: PathBuf, installer: Arc<dyn Installer> },
 }
 
 type SavePrefs = Arc<dyn Fn(&UpdatePrefs) + Send + Sync>;
@@ -87,6 +119,7 @@ pub struct Updater {
     job: Option<Receiver<State>>,
     prefs: UpdatePrefs,
     save_prefs: SavePrefs,
+    install: Install,
 }
 
 impl Updater {
@@ -105,7 +138,18 @@ impl Updater {
             job: None,
             prefs: UpdatePrefs::default(),
             save_prefs: Arc::new(|_| {}),
+            install: Install::Unwired,
         }
+    }
+
+    /// Install into `target`, the running app's bundle (None when not running from one). When
+    /// the bundle cannot be replaced in place, Releases are announced with Open release page only.
+    pub fn with_install(mut self, target: Option<PathBuf>, installer: Arc<dyn Installer>) -> Updater {
+        self.install = match target.filter(|t| replaceable(&*installer, t)) {
+            Some(target) => Install::Possible { target, installer },
+            None => Install::Degraded,
+        };
+        self
     }
 
     /// Use these preferences, and call `save` whenever the Updater changes them.
@@ -158,7 +202,9 @@ impl Updater {
             cfg!(all(target_os = "macos", target_arch = "aarch64")),
         );
         u.on_change = Arc::new(repaint);
-        u.with_prefs(prefs, save)
+        let u = u.with_prefs(prefs, save).with_install(running_bundle(), Arc::new(SystemInstaller));
+        u.cleanup_old_bundle();
+        u
     }
 
     /// Start the one check of this launch on a plain thread; never blocks the caller.
@@ -169,10 +215,12 @@ impl Updater {
         let (tx, rx) = channel();
         let (feed, current, notify) = (self.feed.clone(), self.current.clone(), self.on_change.clone());
         let skipped = self.prefs.skipped_version.clone();
+        let degraded = matches!(self.install, Install::Degraded);
         std::thread::spawn(move || {
             let found = feed
                 .latest()
                 .and_then(|json| announce(&current, &json))
+                .map(|s| if degraded { announce_only(s) } else { s })
                 .filter(|s| !is_skipped(s, skipped.as_deref()));
             if let Some(found) = found {
                 let _ = tx.send(found);
@@ -237,18 +285,108 @@ impl Updater {
         let (tx, rx) = channel();
         let (dmgs, dir, notify) = (self.dmgs.clone(), self.downloads.clone(), self.on_change.clone());
         let job = update.clone();
+        let install = match &self.install {
+            Install::Possible { target, installer } => Some((target.clone(), installer.clone())),
+            _ => None,
+        };
         std::thread::spawn(move || {
             let send = |s: State| {
                 let _ = tx.send(s);
                 notify();
             };
             match fetch_verified(&*dmgs, &dir, &job, &|| send(State::Verifying(job.clone()))) {
-                Ok(dmg) => send(State::Ready { update: job.clone(), dmg }),
+                Ok(dmg) => match &install {
+                    None => send(State::Ready { update: job.clone(), dmg }),
+                    Some((target, installer)) => {
+                        send(State::Installing(job.clone()));
+                        match install_bundle(&**installer, &dmg, target) {
+                            Ok(()) => send(State::Relaunching(job.clone())),
+                            Err(error) => send(State::Failed { update: job.clone(), error }),
+                        }
+                    }
+                },
                 Err(error) => send(State::Failed { update: job.clone(), error }),
             }
         });
         self.state = State::Downloading(update);
         self.job = Some(rx);
+    }
+}
+
+/// Delete the `.old` bundle a previous Update left next to the installed app.
+impl Updater {
+    pub fn cleanup_old_bundle(&self) {
+        if let Install::Possible { target, installer } = &self.install {
+            let old = sibling(target, ".old");
+            if old.exists() {
+                let _ = installer.remove(&old);
+            }
+        }
+    }
+}
+
+fn sibling(target: &Path, suffix: &str) -> PathBuf {
+    let mut name = target.file_name().unwrap_or_default().to_os_string();
+    name.push(suffix);
+    target.with_file_name(name)
+}
+
+/// True when the bundle can be swapped in place: an `.app`, not App-Translocated, on a writable
+/// volume, in a folder we can write to.
+fn replaceable(installer: &dyn Installer, target: &Path) -> bool {
+    let Some(parent) = target.parent() else { return false };
+    target.extension().is_some_and(|e| e == "app")
+        && !target.components().any(|c| c.as_os_str() == "AppTranslocation")
+        && !installer.volume_read_only(parent)
+        && tempfile::Builder::new().prefix(".mm-write-probe").tempfile_in(parent).is_ok()
+}
+
+/// A Release that cannot be installed is announced only.
+fn announce_only(s: State) -> State {
+    match s {
+        State::Updatable(u) => State::Available { version: u.version, notes: u.notes, url: u.url },
+        other => other,
+    }
+}
+
+/// Replace `target` with the app inside the DMG. On any failure the original bundle is back in
+/// place (it is never deleted before the new one is), and the error says what went wrong.
+fn install_bundle(installer: &dyn Installer, dmg: &Path, target: &Path) -> Result<(), String> {
+    let name = target.file_name().ok_or("no app name")?;
+    let (fresh, old) = (sibling(target, ".new"), sibling(target, ".old"));
+    let mount = installer.mount(dmg).map_err(|e| format!("Cannot open the downloaded disk image: {e}"))?;
+    let copied = remove_if_present(installer, &fresh).and_then(|()| installer.copy(&mount.join(name), &fresh));
+    installer.unmount(&mount);
+    if let Err(e) = copied {
+        let _ = remove_if_present(installer, &fresh);
+        return Err(format!("Cannot copy the new version: {e}"));
+    }
+    // A `.old` still here belongs to an earlier Update; the installed bundle is what matters now.
+    let aside = remove_if_present(installer, &old).and_then(|()| installer.rename(target, &old));
+    if let Err(e) = aside {
+        let _ = remove_if_present(installer, &fresh);
+        return Err(format!("Cannot move the installed app aside: {e}"));
+    }
+    let placed = installer.rename(&fresh, target);
+    let finished = placed.clone().and_then(|()| {
+        installer.strip_quarantine(target).map_err(|e| format!("Cannot clear quarantine: {e}"))?;
+        installer.relaunch(target).map_err(|e| format!("Cannot start the new version: {e}"))
+    });
+    let Err(e) = finished else { return Ok(()) };
+    // Roll back: drop whatever new bundle is in place, then put the old one back.
+    let restored = remove_if_present(installer, if placed.is_ok() { target } else { &fresh })
+        .and_then(|()| installer.rename(&old, target));
+    match restored {
+        Ok(()) => Err(format!("{e}. The installed version was left unchanged.")),
+        Err(r) => Err(format!("{e}. Restoring the old version also failed: {r}. It is at {}", old.display())),
+    }
+}
+
+fn remove_if_present(installer: &dyn Installer, path: &Path) -> Result<(), String> {
+    if path.exists() {
+        installer.remove(path)
+    } else {
+        Ok(())
     }
 }
 
@@ -360,6 +498,74 @@ impl DmgSource for HttpDmgs {
             .limit(200 * 1024 * 1024)
             .read_to_vec()
             .map_err(|e| format!("Download failed: {e}"))
+    }
+}
+
+/// The `.app` the running executable lives in, if any.
+fn running_bundle() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let bundle = exe.ancestors().nth(3)?;
+    (bundle.extension()? == "app").then(|| bundle.to_path_buf())
+}
+
+struct SystemInstaller;
+impl SystemInstaller {
+    fn run(cmd: &str, args: &[&std::ffi::OsStr]) -> Result<(), String> {
+        let out = std::process::Command::new(cmd).args(args).output().map_err(|e| format!("{cmd}: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!("{cmd}: {}", String::from_utf8_lossy(&out.stderr).trim()))
+        }
+    }
+}
+impl Installer for SystemInstaller {
+    fn mount(&self, dmg: &Path) -> Result<PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!("MacMischer-mount-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let args = ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"];
+        let mut a: Vec<&std::ffi::OsStr> = args.iter().map(|s| s.as_ref()).collect();
+        a.extend([dir.as_os_str(), dmg.as_os_str()]);
+        match Self::run("hdiutil", &a) {
+            Ok(()) => Ok(dir),
+            Err(e) => {
+                let _ = std::fs::remove_dir(&dir);
+                Err(e)
+            }
+        }
+    }
+    fn unmount(&self, mount: &Path) {
+        let _ = Self::run("hdiutil", &["detach".as_ref(), "-force".as_ref(), mount.as_os_str()]);
+        let _ = std::fs::remove_dir(mount);
+    }
+    fn copy(&self, from: &Path, to: &Path) -> Result<(), String> {
+        Self::run("ditto", &[from.as_os_str(), to.as_os_str()])
+    }
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), String> {
+        std::fs::rename(from, to).map_err(|e| format!("cannot move {}: {e}", from.display()))
+    }
+    fn remove(&self, path: &Path) -> Result<(), String> {
+        std::fs::remove_dir_all(path).map_err(|e| format!("cannot remove {}: {e}", path.display()))
+    }
+    fn strip_quarantine(&self, path: &Path) -> Result<(), String> {
+        Self::run("xattr", &["-dr".as_ref(), "com.apple.quarantine".as_ref(), path.as_os_str()])
+    }
+    fn relaunch(&self, path: &Path) -> Result<(), String> {
+        Self::run("open", &["-n".as_ref(), path.as_os_str()])
+    }
+    fn volume_read_only(&self, path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return true };
+            let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+            unsafe { libc::statvfs(c.as_ptr(), &mut st) != 0 || st.f_flag & libc::ST_RDONLY != 0 }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            true
+        }
     }
 }
 
@@ -769,5 +975,271 @@ mod tests {
         launch(&mut u);
         u.skip_this_version();
         assert!(saved.0.lock().unwrap().is_empty());
+    }
+
+    // ---- Update now: install in place and relaunch ----
+
+    fn write(path: &std::path::Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    fn version_of(bundle: &std::path::Path) -> Option<String> {
+        std::fs::read_to_string(bundle.join("Contents/version.txt")).ok()
+    }
+
+    fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap() {
+            let e = e.unwrap();
+            let dest = to.join(e.file_name());
+            if e.path().is_dir() {
+                copy_tree(&e.path(), &dest);
+            } else {
+                std::fs::copy(e.path(), dest).unwrap();
+            }
+        }
+    }
+
+    /// Stands in for hdiutil/ditto/xattr/open. Moves and removals are real, on a temp directory;
+    /// `fail` names the one step that must fail: mount, copy, aside, place, strip or relaunch.
+    struct FakeInstaller {
+        volume: PathBuf,
+        target: PathBuf,
+        fail: Mutex<Option<&'static str>>,
+        read_only_volume: bool,
+        log: Mutex<Vec<String>>,
+    }
+    impl FakeInstaller {
+        fn step(&self, name: &'static str, detail: String) -> Result<(), String> {
+            self.log.lock().unwrap().push(format!("{name} {detail}"));
+            if *self.fail.lock().unwrap() == Some(name) {
+                Err(format!("forced {name} failure"))
+            } else {
+                Ok(())
+            }
+        }
+        fn did(&self, name: &str) -> Vec<String> {
+            let prefix = format!("{name} ");
+            self.log.lock().unwrap().iter().filter_map(|l| l.strip_prefix(&prefix).map(String::from)).collect()
+        }
+    }
+    impl Installer for FakeInstaller {
+        fn mount(&self, dmg: &std::path::Path) -> Result<PathBuf, String> {
+            assert!(dmg.is_file(), "the verified DMG is what gets mounted");
+            self.step("mount", dmg.display().to_string())?;
+            Ok(self.volume.clone())
+        }
+        fn unmount(&self, _: &std::path::Path) {
+            let _ = self.step("unmount", String::new());
+        }
+        fn copy(&self, from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+            copy_tree(from, to);
+            self.step("copy", to.display().to_string())
+        }
+        fn rename(&self, from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+            let name = if from == self.target {
+                "aside"
+            } else if to == self.target && from.extension().is_some_and(|e| e == "new") {
+                "place"
+            } else {
+                "restore"
+            };
+            self.step(name, to.display().to_string())?;
+            std::fs::rename(from, to).map_err(|e| e.to_string())
+        }
+        fn remove(&self, path: &std::path::Path) -> Result<(), String> {
+            std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+        }
+        fn strip_quarantine(&self, path: &std::path::Path) -> Result<(), String> {
+            self.step("strip", path.display().to_string())
+        }
+        fn relaunch(&self, path: &std::path::Path) -> Result<(), String> {
+            self.step("relaunch", path.display().to_string())
+        }
+        fn volume_read_only(&self, _: &std::path::Path) -> bool {
+            self.read_only_volume
+        }
+    }
+
+    struct Rig {
+        _tmp: tempfile::TempDir,
+        apps: PathBuf,
+        target: PathBuf,
+        installer: Arc<FakeInstaller>,
+        updater: Updater,
+    }
+
+    fn rig_with(fail: Option<&'static str>, read_only_volume: bool, target_override: Option<Option<PathBuf>>) -> Rig {
+        let tmp = tempfile::tempdir().unwrap();
+        let apps = tmp.path().join("Applications");
+        let target = apps.join("MacMischer.app");
+        write(&target.join("Contents/version.txt"), "0.1.1");
+        let volume = tmp.path().join("volume");
+        write(&volume.join("MacMischer.app/Contents/version.txt"), "0.2.0");
+        let installer =
+            Arc::new(FakeInstaller { volume, target: target.clone(), fail: Mutex::new(fail), read_only_volume, log: Mutex::default() });
+        let mut updater = Updater::new("0.1.1", Arc::new(FakeFeed(Some(good_release()))), Arc::new(FakeBrowser::default()), true)
+            .with_downloads(FakeDmgs::new(Ok(DMG.to_vec())), tmp.path().join("dl"))
+            .with_install(target_override.unwrap_or(Some(target.clone())), installer.clone());
+        updater.check_at_launch();
+        updater.settle();
+        Rig { _tmp: tmp, apps, target, installer, updater }
+    }
+
+    fn rig(fail: Option<&'static str>) -> Rig {
+        rig_with(fail, false, None)
+    }
+
+    #[test]
+    fn update_now_installs_the_new_bundle_strips_quarantine_and_relaunches() {
+        let mut r = rig(None);
+        r.updater.update_now();
+        r.updater.settle();
+        assert!(matches!(r.updater.state(), State::Relaunching(u) if u.version == "0.2.0"));
+        assert_eq!(version_of(&r.target).as_deref(), Some("0.2.0"));
+        assert_eq!(version_of(&r.apps.join("MacMischer.app.old")).as_deref(), Some("0.1.1"));
+        assert_eq!(r.installer.did("strip"), vec![r.target.display().to_string()]);
+        assert_eq!(r.installer.did("relaunch"), vec![r.target.display().to_string()]);
+        assert_eq!(r.installer.did("unmount").len(), 1);
+        assert!(!r.apps.join("MacMischer.app.new").exists(), "no temporary copy is left behind");
+    }
+
+    /// The original bundle is back, intact, and no helper copies are left in the folder.
+    fn assert_original_restored(r: &Rig) {
+        assert_eq!(version_of(&r.target).as_deref(), Some("0.1.1"));
+        let mut names: Vec<_> =
+            std::fs::read_dir(&r.apps).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        assert_eq!(names, vec!["MacMischer.app"]);
+    }
+
+    fn assert_failed_with(r: &mut Rig, step: &str) {
+        let State::Failed { update, error } = r.updater.state().clone() else { panic!("{:?}", r.updater.state()) };
+        assert_eq!(update.version, "0.2.0");
+        assert!(error.contains(&format!("forced {step} failure")), "{error}");
+        assert!(r.installer.did("relaunch").is_empty() || step == "relaunch");
+    }
+
+    #[test]
+    fn a_failure_at_each_step_restores_the_original_bundle_and_reports_an_error() {
+        for step in ["mount", "copy", "aside", "place", "strip", "relaunch"] {
+            let mut r = rig(Some(step));
+            r.updater.update_now();
+            r.updater.settle();
+            assert_failed_with(&mut r, step);
+            assert_original_restored(&r);
+        }
+    }
+
+    #[test]
+    fn the_mount_is_released_even_when_copying_fails() {
+        let mut r = rig(Some("copy"));
+        r.updater.update_now();
+        r.updater.settle();
+        assert_eq!(r.installer.did("unmount").len(), 1);
+    }
+
+    #[test]
+    fn the_old_bundle_is_only_moved_aside_after_the_new_one_is_fully_copied() {
+        let mut r = rig(Some("copy"));
+        r.updater.update_now();
+        r.updater.settle();
+        assert!(r.installer.did("aside").is_empty());
+        assert_eq!(version_of(&r.target).as_deref(), Some("0.1.1"));
+    }
+
+    #[test]
+    fn try_again_after_a_failed_install_can_succeed() {
+        let mut r = rig(Some("strip"));
+        r.updater.update_now();
+        r.updater.settle();
+        assert!(matches!(r.updater.state(), State::Failed { .. }));
+        *r.installer.fail.lock().unwrap() = None;
+        r.updater.update_now();
+        r.updater.settle();
+        assert!(matches!(r.updater.state(), State::Relaunching(_)));
+        assert_eq!(version_of(&r.target).as_deref(), Some("0.2.0"));
+    }
+
+    #[test]
+    fn a_leftover_old_bundle_is_removed_on_the_next_launch() {
+        let r = rig(None);
+        let old = r.apps.join("MacMischer.app.old");
+        write(&old.join("Contents/version.txt"), "0.0.9");
+        r.updater.cleanup_old_bundle();
+        assert!(!old.exists());
+        assert_eq!(version_of(&r.target).as_deref(), Some("0.1.1"), "the installed bundle is untouched");
+    }
+
+    #[test]
+    fn cleanup_with_nothing_left_over_does_nothing() {
+        let r = rig(None);
+        r.updater.cleanup_old_bundle();
+        assert_eq!(version_of(&r.target).as_deref(), Some("0.1.1"));
+    }
+
+    #[test]
+    fn a_stale_old_bundle_does_not_block_the_next_update() {
+        let mut r = rig(None);
+        write(&r.apps.join("MacMischer.app.old/Contents/version.txt"), "0.0.9");
+        r.updater.update_now();
+        r.updater.settle();
+        assert!(matches!(r.updater.state(), State::Relaunching(_)));
+        assert_eq!(version_of(&r.apps.join("MacMischer.app.old")).as_deref(), Some("0.1.1"));
+    }
+
+    // ---- degraded: Open release page instead of Update now ----
+
+    fn assert_announce_only(r: &mut Rig) {
+        assert!(matches!(r.updater.state(), State::Available { version, .. } if version == "0.2.0"), "{:?}", r.updater.state());
+        r.updater.update_now(); // there is no Update now to press
+        r.updater.settle();
+        assert!(matches!(r.updater.state(), State::Available { .. }));
+        assert!(r.installer.did("mount").is_empty());
+    }
+
+    #[test]
+    fn not_running_from_an_app_bundle_is_announce_only() {
+        let mut r = rig_with(None, false, Some(None));
+        assert_announce_only(&mut r);
+    }
+
+    #[test]
+    fn a_path_that_is_not_an_app_bundle_is_announce_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut r = rig_with(None, false, Some(Some(tmp.path().join("target/debug/macmischer"))));
+        assert_announce_only(&mut r);
+    }
+
+    #[test]
+    fn a_read_only_volume_is_announce_only() {
+        let mut r = rig_with(None, true, None);
+        assert_announce_only(&mut r);
+    }
+
+    #[test]
+    fn an_app_translocation_path_is_announce_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let translocated = tmp.path().join("AppTranslocation/ABC-123/d/MacMischer.app");
+        write(&translocated.join("Contents/version.txt"), "0.1.1");
+        let mut r = rig_with(None, false, Some(Some(translocated)));
+        assert_announce_only(&mut r);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_we_cannot_write_to_is_announce_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let locked = tmp.path().join("locked");
+        write(&locked.join("MacMischer.app/Contents/version.txt"), "0.1.1");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let writable_anyway = std::fs::File::create(locked.join("probe")).is_ok(); // running as root
+        let mut r = rig_with(None, false, Some(Some(locked.join("MacMischer.app"))));
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !writable_anyway {
+            assert_announce_only(&mut r);
+        }
     }
 }

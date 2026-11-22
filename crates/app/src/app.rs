@@ -343,7 +343,7 @@ fn help_window(ctx: &egui::Context, open: &mut bool) {
 }
 
 impl App {
-    /// Non-blocking banner announcing a newer Release; Update now downloads and verifies it.
+    /// Non-blocking banner announcing a newer Release; Update now downloads, verifies and installs it.
     fn update_banner(&mut self, ui: &mut egui::Ui) {
         use crate::updater::State;
         let state = self.updater.state().clone();
@@ -354,6 +354,12 @@ impl App {
             State::Downloading(u) => (u.version.clone(), String::new(), "Downloading…", None),
             State::Verifying(u) => (u.version.clone(), String::new(), "Verifying…", None),
             State::Ready { update, .. } => (update.version.clone(), String::new(), "is downloaded and verified", None),
+            State::Installing(u) => (u.version.clone(), String::new(), "Installing…", None),
+            State::Relaunching(u) => {
+                // The new bundle is in place and started: hand over to it.
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                (u.version.clone(), String::new(), "installed, restarting…", None)
+            }
             State::Failed { update, error } => (update.version.clone(), update.notes.clone(), "update failed", Some(error.clone())),
         };
         egui::Panel::top("update_banner").show(ui, |ui| {
