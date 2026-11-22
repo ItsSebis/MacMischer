@@ -105,7 +105,6 @@ impl Biquad {
     }
 }
 
-/// Response of a single band in dB at `hz`.
 /// Output level (dB) of a compressor (soft knee) or expander/gate for input `x` (dB).
 /// `ratio` is the compression ratio, or for `expand` the downward slope multiplier.
 pub fn comp_curve(x: f32, thr: f32, ratio: f32, knee: f32, expand: bool) -> f32 {
@@ -123,6 +122,7 @@ pub fn comp_curve(x: f32, thr: f32, ratio: f32, knee: f32, expand: bool) -> f32 
     }
 }
 
+/// Response of a single band in dB at `hz`.
 #[cfg(test)]
 pub fn band_db(b: &Band, hz: f32) -> f32 {
     Biquad::new(b.kind, b.hz as f64, b.gain_db as f64, b.q as f64).db_at(hz as f64) as f32
