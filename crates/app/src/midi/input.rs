@@ -268,22 +268,19 @@ mod tests {
     }
 
     #[test]
-    fn a_scene_recall_rearms_soft_takeover() {
-        let (mut r, far) = engaged_rig();
-        r.input.reset();
-        assert!(r.feed(vec![cc(7, far)]).actions.is_empty(), "scene recalled: re-armed");
-    }
-
-    #[test]
     fn a_scene_recall_stops_the_batch_and_rearms() {
         let mut r = Rig::new(vec![
             Binding::new(1, Source::Note(37), Target::RecallScene(3)),
             Binding::new(1, Source::Note(36), Target::StripMute(CH1)),
+            Binding::new(1, Source::Cc(7), Target::StripFader(CH1)),
         ]);
+        let far = if near_half() < 64 { 127 } else { 0 };
+        assert_eq!(r.feed(vec![cc(7, near_half())]).actions.len(), 1, "engaged at the fader");
         let fed = r.feed(vec![
             MidiMsg::NoteOn { ch: 1, note: 37, vel: 100 },
             MidiMsg::NoteOn { ch: 1, note: 36, vel: 100 },
         ]);
         assert_eq!(fed.actions, vec![Action::RecallScene(3)], "nothing after the recall acts on the old scene");
+        assert!(r.feed(vec![cc(7, far)]).actions.is_empty(), "scene recalled: soft takeover re-armed");
     }
 }

@@ -263,10 +263,12 @@ impl Console {
             Action::PresetLoadConfirmed(name) => {
                 // Only the prompt it answers: same strip and preset name, else ignore.
                 let matches = self.pending_load.as_ref().is_some_and(|p| p.strip == s && p.name == name);
-                if !matches {
+                if matches {
+                    // Answered: the prompt closes even when the load itself fails.
                     self.pending_load = None;
-                } else if let Some(msg) = self.load_preset(m, s, &name, true, false) {
-                    say(out, msg);
+                    if let Some(msg) = self.load_preset(m, s, &name, true, false) {
+                        say(out, msg);
+                    }
                 }
             }
             Action::PresetRefresh => self.presets = crate::presets::list(&self.preset_dir),
@@ -539,8 +541,22 @@ mod tests {
     fn confirming_without_a_pending_prompt_writes_nothing() {
         let mut r = safe_rig_with_changed_hpf();
         r.run(vec![Action::PresetLoadConfirmed("t".into())]);
-        assert!((r.hpf() - 0.9).abs() < 1e-6);
+        assert!((r.hpf() - 0.9).abs() < 1e-6, "a load would have moved the HPF back");
+        assert!(r.console.pending_load().is_none());
         assert!(!r.console.preset_undo_available());
+    }
+
+    #[test]
+    fn a_failed_confirmed_load_still_closes_the_prompt() {
+        let mut r = safe_rig_with_changed_hpf();
+        r.run(vec![Action::PresetLoad("t".into())]);
+        assert!(r.console.pending_load().is_some());
+        for f in r.dir.path().read_dir().unwrap() {
+            std::fs::remove_file(f.unwrap().path()).unwrap();
+        }
+        let out = r.run(vec![Action::PresetLoadConfirmed("t".into())]);
+        assert!(out.flash.is_some(), "the failure is reported");
+        assert!(r.console.pending_load().is_none());
     }
 
     #[test]
@@ -549,6 +565,7 @@ mod tests {
         r.run(vec![Action::PresetLoad("t".into())]);
         r.run(vec![Action::PresetLoadConfirmed("other".into())]);
         assert!((r.hpf() - 0.9).abs() < 1e-6);
+        assert_eq!(r.console.pending_load().map(|p| p.name.as_str()), Some("t"), "unrelated prompt left alone");
     }
 
     #[test]
@@ -561,6 +578,7 @@ mod tests {
         assert_eq!(r.mixer.state().get(ch2).cloned(), before);
         assert!((r.hpf() - 0.9).abs() < 1e-6);
         assert!(!r.console.preset_undo_available());
+        assert!(r.console.pending_load().is_none(), "moving the selection already dropped the prompt");
     }
 
     #[test]
