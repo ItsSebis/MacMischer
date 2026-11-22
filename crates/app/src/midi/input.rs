@@ -244,14 +244,34 @@ mod tests {
         assert!(r.learn.note.as_deref().unwrap().contains("already bound"));
     }
 
-    #[test]
-    fn changing_device_or_bindings_rearms_soft_takeover() {
+    /// Engage the fader binding, then return a CC value far from the fader.
+    fn engaged_rig() -> (Rig, u8) {
         let mut r = Rig::new(fader_binding());
         let far = if near_half() < 64 { 127 } else { 0 };
         assert!(r.feed(vec![cc(7, far)]).actions.is_empty(), "far from the fader: not engaged");
         assert_eq!(r.feed(vec![cc(7, near_half())]).actions.len(), 1, "engaged at the fader");
+        (r, far)
+    }
+
+    #[test]
+    fn changing_the_device_rearms_soft_takeover() {
+        let (mut r, far) = engaged_rig();
         r.prefs.device = Some("other".into());
         assert!(r.feed(vec![cc(7, far)]).actions.is_empty(), "device changed: re-armed");
+    }
+
+    #[test]
+    fn changing_the_bindings_rearms_soft_takeover() {
+        let (mut r, far) = engaged_rig();
+        r.prefs.bindings.push(Binding::new(1, Source::Cc(20), Target::StripMute(CH1)));
+        assert!(r.feed(vec![cc(7, far)]).actions.is_empty(), "bindings changed: re-armed");
+    }
+
+    #[test]
+    fn a_scene_recall_rearms_soft_takeover() {
+        let (mut r, far) = engaged_rig();
+        r.input.reset();
+        assert!(r.feed(vec![cc(7, far)]).actions.is_empty(), "scene recalled: re-armed");
     }
 
     #[test]
