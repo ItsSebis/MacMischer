@@ -9,6 +9,7 @@ mod app;
 mod bank_editor;
 mod banks;
 mod connect;
+mod console;
 mod dyn_view;
 mod eq_view;
 mod eqmath;

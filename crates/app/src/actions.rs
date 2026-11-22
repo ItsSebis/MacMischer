@@ -69,7 +69,8 @@ pub fn nudge_fader(f: f32, db: f32) -> f32 {
 }
 
 impl Action {
-    /// Allowed while the console is locked: navigation, mutes/solo, the main fader.
+    /// Allowed while locked: navigation, mutes/solo, the main fader. Exhaustive on purpose: a new
+    /// Action must be classified here before it compiles.
     pub fn allowed_when_locked(&self, selected: StripId) -> bool {
         match self {
             Action::Select(_)
@@ -93,7 +94,19 @@ impl Action {
                 Param::On(_) | Param::Solo(_) | Param::MuteGroupOn(_) | Param::Fader(StripId::Main)
             ),
             Action::Nudge(_) | Action::Unity => selected == StripId::Main,
-            _ => false,
+            Action::PanNudge(_)
+            | Action::RecallScene(_)
+            | Action::SaveScene(..)
+            | Action::RenameScene(..)
+            | Action::Undo
+            | Action::Redo
+            | Action::AbToggle
+            | Action::AbSelect(_)
+            | Action::PresetSave(_)
+            | Action::PresetLoad(_)
+            | Action::PresetDelete(_)
+            | Action::PresetLoadConfirmed(_)
+            | Action::PresetUndo => false,
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Application state, input handling, action dispatcher and top-level layout.
 
-use crate::actions::{nudge_fader, Action};
+use crate::actions::Action;
+use crate::console::{Console, Env};
 use crate::bank_editor::BankEditor;
 use crate::banks::Bank;
 use crate::scenes::ScenesUi;
@@ -9,7 +10,7 @@ use crate::input::{Entry, NumberEntry};
 use crate::keymap::{Binding, Keymap};
 use crate::theme;
 use crate::views;
-use crate::widgets::{Ballistics, UNITY};
+use crate::widgets::Ballistics;
 use eframe::egui;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -18,19 +19,6 @@ use std::time::{Duration, Instant};
 use crate::connect::{parse_addr, Finder};
 use xair_core::{Mixer, Status};
 use xair_proto::{Param, StripId, Value};
-
-/// Values overwritten by the last preset load (strip and linked partner), for "Undo preset".
-struct PresetUndo {
-    strips: Vec<StripId>,
-    old: crate::ab::Snapshot,
-}
-
-/// A preset load waiting for the user's confirmation.
-struct PendingLoad {
-    strip: StripId,
-    name: String,
-    text: String,
-}
 
 enum Conn {
     Finding(Finder),
@@ -41,8 +29,8 @@ pub struct App {
     ctx: egui::Context,
     conn: Conn,
     _mock: Option<xair_mock::MockMixer>,
-    selected: StripId,
     session: Session,
+    console: Console,
     ball: HashMap<StripId, Ballistics>,
     entry: NumberEntry,
     keymap: Keymap,
@@ -57,21 +45,11 @@ pub struct App {
     midi_hold: Option<crate::midi::Hold>,
     /// What the MIDI mapping last saw; a change re-arms soft takeover.
     midi_sig: Option<(crate::midi::MidiStatus, bool, Option<String>, Vec<crate::midi::Binding>)>,
-    /// Last scene recall: fader/pan MIDI is ignored while the mixer re-reads its state.
-    recall_at: Option<Instant>,
     view: views::DetailView,
     show_routing: bool,
     show_fx: bool,
-    history: crate::history::History,
-    ab: crate::ab::Ab,
-    presets: Vec<String>,
-    /// Values overwritten by the last preset load (for "Undo preset").
-    preset_undo: Option<PresetUndo>,
     /// EQ view RTA overlay toggle (session only, default off).
     rta_on: bool,
-    pending_load: Option<PendingLoad>,
-    /// Lock mode: only mutes, solo, navigation and the main fader respond.
-    locked: bool,
     /// Short status message (e.g. "Locked").
     flash: Option<(String, Instant)>,
 }
@@ -84,8 +62,8 @@ impl App {
             ctx: ctx.clone(),
             conn: Conn::Finding(Finder::new(remembered, true)),
             _mock: None,
-            selected: StripId::Ch(1),
             session,
+            console: Console::new(crate::presets::dir()),
             ball: HashMap::new(),
             entry: NumberEntry::default(),
             keymap: Keymap::default(),
@@ -99,24 +77,17 @@ impl App {
             midi_ui: Default::default(),
             midi_hold: None,
             midi_sig: None,
-            recall_at: None,
             view: views::DetailView::Mix,
             show_routing: false,
             show_fx: false,
-            history: Default::default(),
-            ab: Default::default(),
-            presets: crate::presets::list(&crate::presets::dir()),
-            preset_undo: None,
             rta_on: false,
-            pending_load: None,
-            locked: false,
             flash: None,
         };
         // Dev aid for screenshots: MM_SHOW=editor|help|dca|scenes|routing opens that dialog on start.
         match std::env::var("MM_SHOW").as_deref() {
             Ok("editor") => app.editor = Some(BankEditor::open(0, &app.session.banks[0])),
             Ok("help") => app.show_help = true,
-            Ok("dca") => app.selected = StripId::Dca(1),
+            Ok("dca") => app.console.select(StripId::Dca(1)),
             Ok("scenes") => app.scenes.open = true,
             Ok("routing") => app.show_routing = true,
             Ok("remote") => app.show_remote = true,
@@ -136,9 +107,7 @@ impl App {
 
     /// Drop the current connection and show the mixer list ("Switch mixer").
     fn switch_mixer(&mut self) {
-        self.history.clear();
-        self.ab.clear();
-        self.preset_undo = None;
+        self.console.reset();
         self.rta_on = false;
         self.midi_engine.reset();
         let current = match &self.conn {
@@ -168,14 +137,6 @@ impl App {
 
     fn current_bank(&self) -> &Bank {
         &self.session.banks[self.session.bank]
-    }
-
-    /// The level parameter the keyboard controls for strip `s` (send in a bus-bound bank).
-    fn level_param(&self, s: StripId) -> Param {
-        match self.current_bank().bus {
-            Some(t) if s.has_sends() => Param::SendLevel(s, t),
-            _ => Param::Fader(s),
-        }
     }
 
     /// Translate keyboard events into actions.
@@ -223,188 +184,54 @@ impl App {
         ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
     }
 
+    /// Window and bank actions are handled here; everything else goes to the Console.
     fn apply(&mut self, actions: Vec<Action>) {
         let Conn::Mixer(m) = &self.conn else { return };
+        let m = m.clone();
+        let mut batch = Vec::new();
         for a in actions {
-            let s = self.selected;
-            if self.locked && !a.allowed_when_locked(s) {
-                self.flash = Some(("Locked — Ctrl/Cmd+L to unlock".into(), Instant::now()));
-                continue;
-            }
             match a {
-                Action::Set(p, v) => {
-                    invalidate_preset_undo(&mut self.preset_undo, p);
-                    put(m, &mut self.history, p, v)
-                }
-                Action::Select(s) => self.selected = m.state().link_leader(s),
-                Action::SelectPosition(n) => {
-                    let shown = m.state().display_strips(&self.session.banks[self.session.bank].strips);
-                    if let Some(s) = shown.get(n as usize - 1) {
-                        self.selected = *s;
-                    }
-                }
                 Action::SelectBank(i) => {
+                    self.flush(&m, &mut batch);
                     if i < self.session.banks.len() {
                         self.session.bank = i;
                     }
                 }
                 Action::BankStep(d) => {
+                    self.flush(&m, &mut batch);
                     let n = self.session.banks.len() as i32;
                     self.session.bank = (self.session.bank as i32 + d).rem_euclid(n) as usize;
                 }
-                Action::StripStep(d) => {
-                    let strips = &m.state().display_strips(&self.session.banks[self.session.bank].strips);
-                    if strips.is_empty() {
-                        continue;
-                    }
-                    let n = strips.len() as i32;
-                    let i = match strips.iter().position(|x| *x == s) {
-                        Some(i) => (i as i32 + d).clamp(0, n - 1),
-                        None if d < 0 => n - 1,
-                        None => 0,
-                    };
-                    self.selected = strips[i as usize];
-                }
-                Action::Nudge(db) => {
-                    let p = self.level_param(s);
-                    let cur = m.state().get(p).and_then(Value::as_f32).unwrap_or(0.0);
-                    put(m, &mut self.history, p, Value::Float(nudge_fader(cur, db)));
-                }
-                Action::Unity => {
-                    let p = self.level_param(s);
-                    put(m, &mut self.history, p, Value::Float(UNITY));
-                }
-                Action::PanNudge(d) => {
-                    if s.has_pan() {
-                        let v = (m.state().pan(s) + d).clamp(0.0, 1.0);
-                        put(m, &mut self.history, Param::Pan(s), Value::Float(v));
-                    }
-                }
-                Action::ToggleMute => {
-                    let on = m.state().on(s);
-                    put(m, &mut self.history, Param::On(s), Value::Int(!on as i32));
-                }
-                Action::ToggleSolo => {
-                    let on = m.state().soloed(s);
-                    set_solo(m, s, !on);
-                }
-                Action::SetSolo(s, on) => set_solo(m, s, on),
-                Action::RecallScene(i) => {
-                    self.recall_at = Some(Instant::now());
-                    self.midi_engine.reset();
-                    self.history.clear();
-                    self.ab.clear();
-                    self.preset_undo = None;
-                    m.load_snapshot(i);
-                    self.flash = Some((format!("Recalled scene {i}"), Instant::now()));
-                }
-                Action::SaveScene(i, name) => {
-                    m.save_snapshot(i);
-                    m.set(Param::SnapName(i), Value::Str(name));
-                    self.flash = Some((format!("Saved scene {i}"), Instant::now()));
-                }
-                Action::RenameScene(i, name) => m.set(Param::SnapName(i), Value::Str(name)),
-                Action::ToggleLock => self.locked = !self.locked,
                 Action::OpenScenes => self.scenes.open = !self.scenes.open,
                 Action::OpenRouting => self.show_routing = !self.show_routing,
-                Action::Undo => {
-                    match self.history.undo(|p| m.state().get(p).cloned()) {
-                        Some((p, v)) => {
-                            m.set(p, v);
-                            self.flash = Some(("Undo".into(), Instant::now()));
-                        }
-                        None => self.flash = Some(("Nothing to undo".into(), Instant::now())),
-                    }
-                }
-                Action::Redo => {
-                    match self.history.redo(|p| m.state().get(p).cloned()) {
-                        Some((p, v)) => {
-                            m.set(p, v);
-                            self.flash = Some(("Redo".into(), Instant::now()));
-                        }
-                        None => self.flash = Some(("Nothing to redo".into(), Instant::now())),
-                    }
-                }
                 Action::OpenFx => self.show_fx = !self.show_fx,
                 Action::OpenRemote => self.show_remote = !self.show_remote,
                 Action::OpenMidi => self.midi_ui.open = !self.midi_ui.open,
-                Action::AbToggle | Action::AbSelect(_) => {
-                    let params = xair_proto::param::proc_params(s);
-                    if params.is_empty() {
-                        self.flash = Some(("No processing on this strip".into(), Instant::now()));
-                        continue;
-                    }
-                    let live: crate::ab::Snapshot = params
-                        .iter()
-                        .filter_map(|&p| {
-                            let p = Param::Proc(s, p);
-                            m.state().get(p).cloned().map(|v| (p, v))
-                        })
-                        .collect();
-                    if live.len() < params.len() {
-                        self.flash = Some(("A/B: mixer still syncing".into(), Instant::now()));
-                        continue;
-                    }
-                    let writes = match a {
-                        Action::AbSelect(slot) => self.ab.select(s, slot, live),
-                        _ => self.ab.toggle(s, live),
-                    };
-                    // Not recorded in undo: the A/B slots already make a swap reversible, and
-                    // undoing single values would desync the active slot.
-                    for (p, v) in writes {
-                        invalidate_preset_undo(&mut self.preset_undo, p);
-                        m.set(p, v);
-                    }
-                }
-                Action::PresetSave(name) => {
-                    let st = m.state();
-                    let captured = crate::presets::capture(s, |p| st.get(p).cloned());
-                    drop(st);
-                    let msg = match captured {
-                        None => "Preset: nothing to save (no processing, or mixer still syncing)".to_string(),
-                        Some(pr) => match crate::presets::save(&crate::presets::dir(), &name, &pr) {
-                            Ok(n) => format!("Saved preset \"{n}\""),
-                            Err(e) => e,
-                        },
-                    };
-                    self.presets = crate::presets::list(&crate::presets::dir());
-                    self.flash = Some((msg, Instant::now()));
-                }
-                Action::PresetLoad(name) => {
-                    let msg = load_preset(m, s, &name, false, self.session.prefs.safe_mode, &mut self.preset_undo, &mut self.pending_load);
-                    if let Some(msg) = msg {
-                        self.flash = Some((msg, Instant::now()));
-                    }
-                }
-                Action::PresetLoadConfirmed(name) => {
-                    let msg = load_preset(m, s, &name, true, false, &mut self.preset_undo, &mut self.pending_load);
-                    if let Some(msg) = msg {
-                        self.flash = Some((msg, Instant::now()));
-                    }
-                }
-                Action::PresetRefresh => self.presets = crate::presets::list(&crate::presets::dir()),
-                Action::PresetDelete(name) => {
-                    let msg = match crate::presets::delete(&crate::presets::dir(), &name) {
-                        Ok(()) => format!("Deleted preset \"{name}\""),
-                        Err(e) => format!("Cannot delete preset: {e}"),
-                    };
-                    self.presets = crate::presets::list(&crate::presets::dir());
-                    self.flash = Some((msg, Instant::now()));
-                }
-                Action::PresetUndo => {
-                    let msg = match self.preset_undo.take() {
-                        Some(u) => {
-                            for (p, v) in u.old {
-                                m.set(p, v);
-                            }
-                            "Undid preset load".to_string()
-                        }
-                        None => "No preset to undo".to_string(),
-                    };
-                    self.flash = Some((msg, Instant::now()));
-                }
                 Action::SetView(v) => self.view = v,
+                other => batch.push(other),
             }
+        }
+        self.flush(&m, &mut batch);
+    }
+
+    /// Hand queued Actions to the Console (in order, against the bank current at this point).
+    fn flush(&mut self, m: &Mixer, batch: &mut Vec<Action>) {
+        if batch.is_empty() {
+            return;
+        }
+        let bank = &self.session.banks[self.session.bank];
+        let env = Env {
+            bank_strips: &bank.strips,
+            level_bus: bank.bus,
+            safe_mode: self.session.prefs.safe_mode,
+            now: Instant::now(),
+        };
+        let out = self.console.apply(m, &env, batch.drain(..));
+        if out.recalled {
+            self.midi_engine.reset();
+        }
+        if let Some(msg) = out.flash {
+            self.flash = Some((msg, Instant::now()));
         }
     }
 
@@ -450,7 +277,7 @@ impl App {
             return changed;
         }
         let resyncing = !matches!(m.status(), Status::Connected)
-            || self.recall_at.is_some_and(|t| t.elapsed() < Duration::from_millis(600));
+            || self.console.resyncing(Instant::now());
         let st = m.state();
         let view = MixerView { st: &st };
         let (acts, errors) = self.midi_engine.process(
@@ -517,93 +344,6 @@ impl App {
                 }
             });
         });
-    }
-}
-
-/// A later edit of a strip's processing (or a link change) makes the stored old values stale.
-fn invalidate_preset_undo(undo: &mut Option<PresetUndo>, p: Param) {
-    let stale = match p {
-        Param::Proc(x, _) => undo.as_ref().is_some_and(|u| u.strips.contains(&x)),
-        Param::ChLink(_) | Param::BusLink(_) => true,
-        _ => false,
-    };
-    if stale {
-        *undo = None;
-    }
-}
-
-/// Load preset `name` onto `s`. Returns a flash message, or `None` when a confirmation prompt
-/// was queued instead.
-fn load_preset(
-    m: &Mixer,
-    s: StripId,
-    name: &str,
-    confirmed: bool,
-    safe: bool,
-    undo: &mut Option<PresetUndo>,
-    pending: &mut Option<PendingLoad>,
-) -> Option<String> {
-    let pr = match crate::presets::load(&crate::presets::dir(), name) {
-        Ok(p) => p,
-        Err(e) => return Some(e),
-    };
-    let pl = crate::presets::plan(&pr, s);
-    if pl.writes.is_empty() {
-        return Some("Preset has nothing for this strip".into());
-    }
-    let mismatch = crate::presets::needs_confirm(&pr, &pl, s);
-    let target = {
-        let st = m.state();
-        format!("{} {}", s.short(), st.name(s)).trim().to_string()
-    };
-    if !confirmed && (mismatch || safe) {
-        let mut text = format!("Load \"{name}\" onto {target}?");
-        if mismatch {
-            let kind = if pr.kind.is_empty() { "unknown" } else { pr.kind.as_str() };
-            text += &format!("\nSaved from: {kind}; {} parameter(s) do not fit and will be skipped.", pl.skipped);
-        }
-        *pending = Some(PendingLoad { strip: s, name: name.to_string(), text });
-        return None;
-    }
-    *pending = None;
-    let st = m.state();
-    // The linked partner follows the leader on the mixer; remember its old values too.
-    let partner = st.linked_partner(s);
-    let mut old: crate::ab::Snapshot = Vec::new();
-    for x in std::iter::once(s).chain(partner) {
-        for (p, _) in &pl.writes {
-            if let Param::Proc(_, pr) = p {
-                let q = Param::Proc(x, *pr);
-                if let Some(v) = st.get(q).cloned() {
-                    old.push((q, v));
-                }
-            }
-        }
-    }
-    drop(st);
-    if old.len() < pl.writes.len() * (1 + usize::from(partner.is_some())) {
-        return Some("Preset: mixer still syncing".into());
-    }
-    // Direct writes (not `put`): one "Undo preset" instead of ~50 history steps.
-    for (p, v) in &pl.writes {
-        m.set(*p, v.clone());
-    }
-    *undo = Some(PresetUndo { strips: std::iter::once(s).chain(partner).collect(), old });
-    Some(format!("Loaded \"{name}\" onto {target}: {} applied, {} skipped", pl.writes.len(), pl.skipped))
-}
-
-/// Set a parameter, remembering its previous value for undo.
-fn put(m: &Mixer, h: &mut crate::history::History, p: Param, v: Value) {
-    let old = m.state().get(p).cloned();
-    h.record(p, old, Instant::now());
-    m.set(p, v);
-}
-
-/// Solo a strip; linked partners follow (solo isn't mirrored by `Mixer::set`).
-fn set_solo(m: &Mixer, s: StripId, on: bool) {
-    let partner = m.state().linked_partner(s);
-    for x in std::iter::once(s).chain(partner) {
-        m.set(Param::Solo(x.solo_index()), Value::Int(on as i32));
     }
 }
 
@@ -684,7 +424,7 @@ impl eframe::App for App {
         egui::Panel::bottom("banks").exact_size(40.0).show(ui, |ui| self.bank_tabs(ui, &mut actions));
 
         let mut switch = false;
-        let locked = self.locked;
+        let locked = self.console.locked();
         let Conn::Mixer(mixer) = &self.conn else { unreachable!() };
         let status = mixer.status();
         let st_guard = mixer.state();
@@ -695,12 +435,12 @@ impl eframe::App for App {
             st,
             meters: &meters,
             ball: &mut self.ball,
-            selected: self.selected,
+            selected: self.console.selected(),
             actions: &mut actions,
             view: self.view,
-            ab: self.ab.active(self.selected),
-            presets: &self.presets,
-            preset_undo: self.preset_undo.as_ref().is_some_and(|u| u.strips.contains(&self.selected)),
+            ab: self.console.ab_active(),
+            presets: self.console.presets(),
+            preset_undo: self.console.preset_undo_available(),
             rta_on: &mut self.rta_on,
             rta_shown: false,
         };
@@ -827,10 +567,7 @@ impl eframe::App for App {
         // RTA subscription only while the EQ view is drawn with the toggle on.
         mixer.set_rta_wanted(*c.rta_on && c.rta_shown);
         let st_for_windows = st;
-        if self.pending_load.as_ref().is_some_and(|p| p.strip != self.selected) {
-            self.pending_load = None;
-        }
-        if let Some(pl) = &self.pending_load {
+        if let Some(pl) = self.console.pending_load() {
             let mut answer = None;
             egui::Window::new("Load preset").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(&ctx, |ui| {
                 ui.label(&pl.text);
@@ -845,13 +582,13 @@ impl eframe::App for App {
             });
             match answer {
                 Some(true) => actions.push(Action::PresetLoadConfirmed(pl.name.clone())),
-                Some(false) => self.pending_load = None,
+                Some(false) => self.console.cancel_pending_load(),
                 None => {}
             }
         }
         self.scenes.window(&ctx, st_for_windows, self.session.prefs.safe_mode, &mut actions);
-        crate::routing_view::routing_window(&ctx, &mut self.show_routing, st_for_windows, self.locked, &mut actions);
-        crate::fx_view::fx_window(&ctx, &mut self.show_fx, st_for_windows, self.locked, &mut actions);
+        crate::routing_view::routing_window(&ctx, &mut self.show_routing, st_for_windows, self.console.locked(), &mut actions);
+        crate::fx_view::fx_window(&ctx, &mut self.show_fx, st_for_windows, self.console.locked(), &mut actions);
         {
             let (status, clients) = (self.remote.status(), self.remote.clients());
             crate::remote_view::remote_window(
@@ -890,7 +627,7 @@ impl eframe::App for App {
         }
         // Keep the web remote in sync with config and lock (cheap when unchanged).
         self.remote.configure(&self.session.remote);
-        self.remote.set_locked(self.locked);
+        self.remote.set_locked(self.console.locked());
         if prefs_changed {
             self.session.prefs.save();
         }
