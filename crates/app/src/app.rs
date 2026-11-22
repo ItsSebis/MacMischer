@@ -377,6 +377,10 @@ impl App {
                 {
                     self.updater.later();
                 }
+                if matches!(state, State::Available { .. } | State::Updatable(_)) && ui.button("Skip this version").clicked() {
+                    self.updater.skip_this_version();
+                    self.session.prefs.updates = self.updater.prefs().clone();
+                }
             });
             if let Some(e) = error {
                 ui.label(egui::RichText::new(e).color(theme::DIM));
@@ -478,6 +482,12 @@ impl eframe::App for App {
                     ui.selectable_value(safe, false, "Simple").on_hover_text("No confirmations");
                     if *safe != before {
                         prefs_changed = true;
+                    }
+                    ui.separator();
+                    let mut check = self.updater.prefs().check_at_launch;
+                    if ui.checkbox(&mut check, "Check for updates at launch").clicked() {
+                        self.updater.set_check_at_launch(check);
+                        self.session.prefs.updates = self.updater.prefs().clone();
                     }
                     ui.separator();
                     let clients = self.remote.clients();

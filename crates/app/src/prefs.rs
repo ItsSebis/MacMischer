@@ -18,6 +18,8 @@ pub struct Prefs {
     /// MIDI input: enabled, device and bindings (not part of the show file).
     #[serde(deserialize_with = "crate::midi::lenient_prefs")]
     pub midi: crate::midi::MidiPrefs,
+    /// Launch update check and the skipped Release.
+    pub updates: crate::updater::UpdatePrefs,
 }
 
 impl Prefs {
@@ -103,5 +105,21 @@ mod tests {
         assert_eq!(pr.recent_shows[0], Path::new("/9.toml"));
         assert_eq!(pr.recent_shows.iter().filter(|p| *p == Path::new("/9.toml")).count(), 1);
         assert_eq!(pr.last_show.as_deref(), Some(Path::new("/9.toml")));
+    }
+
+    #[test]
+    fn old_prefs_without_update_fields_load_with_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prefs.toml");
+        std::fs::write(&p, "last_mixer = \"10.5.5.48:10024\"\nsafe_mode = true\n").unwrap();
+        let pr = Prefs::load_from(&p);
+        assert_eq!(pr.last_mixer.as_deref(), Some("10.5.5.48:10024"));
+        assert!(pr.updates.check_at_launch);
+        assert_eq!(pr.updates.skipped_version, None);
+        // A file with only part of the section also keeps the defaults.
+        std::fs::write(&p, "[updates]\nskipped_version = \"0.2.0\"\n").unwrap();
+        let pr = Prefs::load_from(&p);
+        assert!(pr.updates.check_at_launch);
+        assert_eq!(pr.updates.skipped_version.as_deref(), Some("0.2.0"));
     }
 }

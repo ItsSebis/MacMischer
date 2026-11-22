@@ -51,6 +51,24 @@ pub enum State {
     Failed { update: Update, error: String },
 }
 
+/// The Updater's slice of the preferences file.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct UpdatePrefs {
+    /// "Check for updates at launch".
+    pub check_at_launch: bool,
+    /// A Release the Operator chose to skip; only strictly newer ones are offered.
+    pub skipped_version: Option<String>,
+}
+
+impl Default for UpdatePrefs {
+    fn default() -> Self {
+        UpdatePrefs { check_at_launch: true, skipped_version: None }
+    }
+}
+
+type SavePrefs = Arc<dyn Fn(&UpdatePrefs) + Send + Sync>;
+
 pub struct Updater {
     current: String,
     feed: Arc<dyn ReleaseFeed>,
@@ -67,6 +85,8 @@ pub struct Updater {
     downloads: PathBuf,
     /// The running download job reports Verifying, then Ready or Failed.
     job: Option<Receiver<State>>,
+    prefs: UpdatePrefs,
+    save_prefs: SavePrefs,
 }
 
 impl Updater {
@@ -83,10 +103,40 @@ impl Updater {
             dmgs: Arc::new(HttpDmgs),
             downloads: std::env::temp_dir().join("MacMischer-update"),
             job: None,
+            prefs: UpdatePrefs::default(),
+            save_prefs: Arc::new(|_| {}),
         }
     }
 
-    /// Replace where DMG bytes come from and where they are stored.
+    /// Use these preferences, and call `save` whenever the Updater changes them.
+    pub fn with_prefs(mut self, prefs: UpdatePrefs, save: SavePrefs) -> Updater {
+        self.prefs = prefs;
+        self.save_prefs = save;
+        self
+    }
+
+    pub fn prefs(&self) -> &UpdatePrefs {
+        &self.prefs
+    }
+
+    pub fn set_check_at_launch(&mut self, on: bool) {
+        self.prefs.check_at_launch = on;
+        (self.save_prefs)(&self.prefs);
+    }
+
+    /// "Skip this version": hide the banner and remember the version in the preferences.
+    pub fn skip_this_version(&mut self) {
+        self.state();
+        if let State::Available { version, .. } | State::Updatable(Update { version, .. }) = &self.state {
+            self.prefs.skipped_version = Some(version.clone());
+            self.state = State::Idle;
+            (self.save_prefs)(&self.prefs);
+        }
+    }
+
+    /// Replace where DMG bytes come from and where they are stored (tests only; production uses
+    /// the GitHub download and a temp folder).
+    #[cfg(test)]
     pub fn with_downloads(mut self, dmgs: Arc<dyn DmgSource>, dir: PathBuf) -> Updater {
         self.dmgs = dmgs;
         self.downloads = dir;
@@ -95,6 +145,12 @@ impl Updater {
 
     /// The real thing: GitHub feed, system browser, macOS arm64 only.
     pub fn production(repaint: impl Fn() + Send + Sync + 'static) -> Updater {
+        let prefs = crate::prefs::Prefs::load().updates;
+        let save: SavePrefs = Arc::new(|u: &UpdatePrefs| {
+            let mut p = crate::prefs::Prefs::load();
+            p.updates = u.clone();
+            p.save();
+        });
         let mut u = Updater::new(
             env!("CARGO_PKG_VERSION"),
             Arc::new(GithubFeed),
@@ -102,18 +158,23 @@ impl Updater {
             cfg!(all(target_os = "macos", target_arch = "aarch64")),
         );
         u.on_change = Arc::new(repaint);
-        u
+        u.with_prefs(prefs, save)
     }
 
     /// Start the one check of this launch on a plain thread; never blocks the caller.
     pub fn check_at_launch(&mut self) {
-        if !self.enabled || self.checked {
+        if !self.enabled || !self.prefs.check_at_launch || self.checked {
             return;
         }
         let (tx, rx) = channel();
         let (feed, current, notify) = (self.feed.clone(), self.current.clone(), self.on_change.clone());
+        let skipped = self.prefs.skipped_version.clone();
         std::thread::spawn(move || {
-            if let Some(found) = feed.latest().and_then(|json| announce(&current, &json)) {
+            let found = feed
+                .latest()
+                .and_then(|json| announce(&current, &json))
+                .filter(|s| !is_skipped(s, skipped.as_deref()));
+            if let Some(found) = found {
                 let _ = tx.send(found);
                 notify();
             }
@@ -241,6 +302,19 @@ fn contract_asset(version: &str, release: &serde_json::Value) -> Option<(String,
         return None;
     }
     Some((asset["browser_download_url"].as_str()?.to_string(), hex.to_ascii_lowercase()))
+}
+
+/// True when the announced Release is not newer than the skipped version.
+fn is_skipped(state: &State, skipped: Option<&str>) -> bool {
+    let version = match state {
+        State::Available { version, .. } => version,
+        State::Updatable(u) => &u.version,
+        _ => return false,
+    };
+    match skipped.and_then(parse_version) {
+        Some(skip) => parse_version(version).is_some_and(|v| v <= skip),
+        None => false,
+    }
 }
 
 /// `major.minor.patch`, numbers only; anything else (e.g. a prerelease suffix) is unparseable.
@@ -615,5 +689,85 @@ mod tests {
         u.settle();
         u.later();
         assert_eq!(u.state(), &State::Idle);
+    }
+
+    #[derive(Default)]
+    struct Saved(Mutex<Vec<UpdatePrefs>>);
+
+    fn with_prefs(prefs: UpdatePrefs, feed: Arc<dyn ReleaseFeed>) -> (Updater, Arc<Saved>) {
+        let saved = Arc::new(Saved::default());
+        let s = saved.clone();
+        let u = Updater::new("0.1.1", feed, Arc::new(FakeBrowser::default()), true)
+            .with_prefs(prefs, Arc::new(move |p: &UpdatePrefs| s.0.lock().unwrap().push(p.clone())));
+        (u, saved)
+    }
+
+    fn launch(u: &mut Updater) {
+        u.check_at_launch();
+        u.settle();
+    }
+
+    #[test]
+    fn update_prefs_default_to_checking_with_nothing_skipped() {
+        assert_eq!(UpdatePrefs::default(), UpdatePrefs { check_at_launch: true, skipped_version: None });
+    }
+
+    #[test]
+    fn check_at_launch_off_makes_no_network_call_and_shows_no_banner() {
+        struct CountingFeed(Mutex<u32>);
+        impl ReleaseFeed for CountingFeed {
+            fn latest(&self) -> Option<String> {
+                *self.0.lock().unwrap() += 1;
+                Some(release("v9.0.0"))
+            }
+        }
+        let feed = Arc::new(CountingFeed(Mutex::new(0)));
+        let prefs = UpdatePrefs { check_at_launch: false, ..Default::default() };
+        let (mut u, _) = with_prefs(prefs, feed.clone());
+        launch(&mut u);
+        assert_eq!(u.state(), &State::Idle);
+        assert_eq!(*feed.0.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn turning_the_toggle_off_is_written_to_prefs() {
+        let (mut u, saved) = with_prefs(UpdatePrefs::default(), Arc::new(FakeFeed(None)));
+        u.set_check_at_launch(false);
+        let last = saved.0.lock().unwrap().last().cloned().unwrap();
+        assert!(!last.check_at_launch);
+    }
+
+    #[test]
+    fn skip_this_version_hides_the_banner_and_is_remembered_across_launches() {
+        let feed = Arc::new(FakeFeed(Some(release("v0.2.0"))));
+        let (mut u, saved) = with_prefs(UpdatePrefs::default(), feed.clone());
+        launch(&mut u);
+        u.skip_this_version();
+        assert_eq!(u.state(), &State::Idle);
+        let written = saved.0.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(written.skipped_version.as_deref(), Some("0.2.0"));
+        // Restart with the written preferences.
+        let (mut u2, _) = with_prefs(written, feed);
+        launch(&mut u2);
+        assert_eq!(u2.state(), &State::Idle);
+    }
+
+    #[test]
+    fn a_release_newer_than_the_skipped_one_is_offered_again() {
+        let prefs = UpdatePrefs { skipped_version: Some("0.2.0".into()), ..Default::default() };
+        let (mut u, _) = with_prefs(prefs.clone(), Arc::new(FakeFeed(Some(release("v0.2.1")))));
+        launch(&mut u);
+        assert!(matches!(u.state(), State::Available { version, .. } if version == "0.2.1"));
+        let (mut older, _) = with_prefs(prefs, Arc::new(FakeFeed(Some(release("v0.1.5")))));
+        launch(&mut older);
+        assert_eq!(older.state(), &State::Idle);
+    }
+
+    #[test]
+    fn skip_without_a_banner_writes_nothing() {
+        let (mut u, saved) = with_prefs(UpdatePrefs::default(), Arc::new(FakeFeed(None)));
+        launch(&mut u);
+        u.skip_this_version();
+        assert!(saved.0.lock().unwrap().is_empty());
     }
 }
