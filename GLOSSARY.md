@@ -45,3 +45,13 @@ _Avoid_: template
 **A/B compare**:
 Switching one Strip between two held snapshots of its processing to compare them.
 _Avoid_: toggle compare
+
+## Releases
+
+**Release**:
+A published, versioned build of MacMischer on GitHub.
+_Avoid_: version (for the published artifact), build
+
+**Update**:
+Replacing the installed app with a newer Release, only after the Operator confirms.
+_Avoid_: upgrade, patch, auto-update
