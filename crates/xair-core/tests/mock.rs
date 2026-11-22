@@ -112,3 +112,20 @@ fn rta_only_while_wanted() {
     std::thread::sleep(Duration::from_millis(300));
     assert!(mixer.meters().rta.is_empty(), "stragglers ignored after off");
 }
+
+#[test]
+fn solo_follows_the_linked_partner() {
+    let mock = MockMixer::start();
+    let mixer = Mixer::connect_with(mock.addr(), fast());
+    wait_for("connected", 5, || mixer.status() == Status::Connected);
+    let (a, b) = (StripId::Ch(1), StripId::Ch(2));
+    mixer.set(Param::Solo(a.solo_index()), Value::Int(1));
+    assert!(mixer.state().soloed(a) && !mixer.state().soloed(b), "unlinked: no mirror");
+    mixer.set(Param::Solo(a.solo_index()), Value::Int(0));
+    mixer.set(Param::ChLink(1), Value::Int(1));
+    mixer.set(Param::Solo(a.solo_index()), Value::Int(1));
+    assert!(mixer.state().soloed(b), "linked: partner follows");
+    wait_for("mock has both", 2, || {
+        mock.get(&Param::Solo(b.solo_index()).path()) == Some(Value::Int(1))
+    });
+}

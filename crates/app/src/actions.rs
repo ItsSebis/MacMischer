@@ -89,10 +89,7 @@ impl Action {
             | Action::OpenMidi
             | Action::PresetRefresh
             | Action::SetView(_) => true,
-            Action::Set(p, _) => matches!(
-                p,
-                Param::On(_) | Param::Solo(_) | Param::MuteGroupOn(_) | Param::Fader(StripId::Main)
-            ),
+            Action::Set(p, _) => p.allowed_when_locked(),
             Action::Nudge(_) | Action::Unity => selected == StripId::Main,
             Action::PanNudge(_)
             | Action::RecallScene(_)

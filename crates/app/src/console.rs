@@ -133,14 +133,6 @@ impl Console {
         out
     }
 
-    /// The level parameter the keyboard controls for strip `s` (send in a bus-bound bank).
-    fn level_param(env: &Env, s: StripId) -> Param {
-        match env.level_bus {
-            Some(t) if s.has_sends() => Param::SendLevel(s, t),
-            _ => Param::Fader(s),
-        }
-    }
-
     fn apply_one(&mut self, m: &Mixer, env: &Env, a: Action, out: &mut Outcome) {
         let s = self.selected;
         if self.locked && !a.allowed_when_locked(s) {
@@ -176,12 +168,12 @@ impl Console {
                 self.select(strips[i as usize]);
             }
             Action::Nudge(db) => {
-                let p = Self::level_param(env, s);
+                let p = Param::level(s, env.level_bus);
                 let cur = m.state().get(p).and_then(Value::as_f32).unwrap_or(0.0);
                 put(m, &mut self.history, p, Value::Float(nudge_fader(cur, db)), env.now);
             }
             Action::Unity => {
-                let p = Self::level_param(env, s);
+                let p = Param::level(s, env.level_bus);
                 put(m, &mut self.history, p, Value::Float(UNITY), env.now);
             }
             Action::PanNudge(d) => {
@@ -388,12 +380,9 @@ fn put(m: &Mixer, h: &mut crate::history::History, p: Param, v: Value, now: Inst
     m.set(p, v);
 }
 
-/// Solo a strip; linked partners follow (solo isn't mirrored by `Mixer::set`).
+/// Solo a strip; `Mixer::set` makes a linked partner follow.
 fn set_solo(m: &Mixer, s: StripId, on: bool) {
-    let partner = m.state().linked_partner(s);
-    for x in std::iter::once(s).chain(partner) {
-        m.set(Param::Solo(x.solo_index()), Value::Int(on as i32));
-    }
+    m.set(Param::Solo(s.solo_index()), Value::Int(on as i32));
 }
 
 #[cfg(test)]

@@ -242,9 +242,25 @@ impl Param {
         })
     }
 
+    /// The level parameter a fader control acts on: the send to `bus` in a bus-bound bank (for
+    /// strips that have sends), else the strip's own fader.
+    pub fn level(s: StripId, bus: Option<SendTo>) -> Param {
+        match bus {
+            Some(t) if s.has_sends() => Param::SendLevel(s, t),
+            _ => Param::Fader(s),
+        }
+    }
+
+    /// Whether the Lock lets this write through: mutes, solo, mute groups and the main fader.
+    /// One rule for every client (app, MIDI, web remote).
+    pub fn allowed_when_locked(self) -> bool {
+        matches!(self, Param::On(_) | Param::Solo(_) | Param::MuteGroupOn(_) | Param::Fader(StripId::Main))
+    }
+
     /// The strip this parameter belongs to, if any.
     pub fn strip(self) -> Option<StripId> {
         match self {
+            Param::Solo(n) => StripId::from_solo_index(n),
             Param::Fader(s) | Param::On(s) | Param::Pan(s) | Param::Name(s) | Param::Color(s)
             | Param::DcaGroups(s) | Param::MuteGroups(s) | Param::MainAssign(s)
             | Param::SendLevel(s, _) | Param::SendTap(s, _) | Param::Proc(s, _) => Some(s),
@@ -407,5 +423,36 @@ mod tests {
         assert_eq!(Param::parse("/bus/1/gate/on"), None);
         assert_eq!(Param::parse("/dca/1/mix/fader"), None);
         assert_eq!(Param::parse("/ch/01/mix/11/level"), None);
+    }
+}
+
+#[cfg(test)]
+mod shared_rules_tests {
+    use super::*;
+
+    #[test]
+    fn level_param_follows_the_bank_bus() {
+        let t = SendTo::Bus(2);
+        assert_eq!(Param::level(StripId::Ch(3), None), Param::Fader(StripId::Ch(3)));
+        assert_eq!(Param::level(StripId::Ch(3), Some(t)), Param::SendLevel(StripId::Ch(3), t));
+        // strips without sends keep their own fader
+        assert_eq!(Param::level(StripId::Main, Some(t)), Param::Fader(StripId::Main));
+    }
+
+    #[test]
+    fn lock_rule_is_mutes_solo_groups_and_main_fader() {
+        let ch = StripId::Ch(1);
+        assert!(Param::On(ch).allowed_when_locked());
+        assert!(Param::Solo(ch.solo_index()).allowed_when_locked());
+        assert!(Param::Fader(StripId::Main).allowed_when_locked());
+        assert!(!Param::Fader(ch).allowed_when_locked());
+        assert!(!Param::SendLevel(ch, SendTo::Bus(1)).allowed_when_locked());
+    }
+
+    #[test]
+    fn solo_index_round_trips() {
+        for s in StripId::all() {
+            assert_eq!(StripId::from_solo_index(s.solo_index()), Some(s));
+        }
     }
 }

@@ -116,6 +116,11 @@ impl StripId {
         }
     }
 
+    /// Inverse of [`StripId::solo_index`].
+    pub fn from_solo_index(n: u8) -> Option<StripId> {
+        StripId::all().into_iter().find(|s| s.solo_index() == n)
+    }
+
     /// Short label like on the console: `12`, `AUX`, `FX2`, `B3`, `S1`, `D4`, `LR`.
     pub fn short(self) -> String {
         match self {

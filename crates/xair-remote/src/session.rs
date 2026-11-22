@@ -138,8 +138,8 @@ impl Session {
                     out.push(json!({"t":"error","msg":"strip not on this page"}));
                     return;
                 };
-                if self.shared.locked.load(Ordering::Relaxed) {
-                    out.push(json!({"t":"error","msg":"Console is locked"}));
+                let p = level_param(s, &page);
+                if !self.write_allowed(p, out) {
                     self.last_state = None; // re-send the real value
                     return;
                 }
@@ -148,7 +148,7 @@ impl Session {
                 }
                 let v = fader::quantize(value.clamp(0.0, page.max_value()));
                 if let Some(m) = self.mixer() {
-                    m.set(level_param(s, &page), Value::Float(v));
+                    m.set(p, Value::Float(v));
                 }
             }
             In::Mute { strip, muted } => {
@@ -156,11 +156,24 @@ impl Session {
                     out.push(json!({"t":"error","msg":"strip not on this page"}));
                     return;
                 };
+                let p = Param::On(s);
+                if !self.write_allowed(p, out) {
+                    return;
+                }
                 if let Some(m) = self.mixer() {
-                    m.set(Param::On(s), Value::Int(!muted as i32));
+                    m.set(p, Value::Int(!muted as i32));
                 }
             }
         }
+    }
+
+    /// The Lock applies to the remote exactly as to the app (`Param::allowed_when_locked`).
+    fn write_allowed(&self, p: Param, out: &mut Vec<Json>) -> bool {
+        let ok = !self.shared.locked.load(Ordering::Relaxed) || p.allowed_when_locked();
+        if !ok {
+            out.push(json!({"t":"error","msg":"Console is locked"}));
+        }
+        ok
     }
 
     /// Resolve a strip id the client sent, only if it is on the open page.
@@ -251,10 +264,7 @@ impl Session {
 
 /// Fader, or the send to the page's bus for input strips.
 fn level_param(s: StripId, page: &PageConfig) -> Param {
-    match page.bus {
-        Some(t) if s.has_sends() => Param::SendLevel(s, t),
-        _ => Param::Fader(s),
-    }
+    Param::level(s, page.bus)
 }
 
 fn color_hex(code: i32) -> &'static str {

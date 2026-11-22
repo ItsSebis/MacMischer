@@ -98,8 +98,8 @@ impl Mixer {
     }
 
     /// Set a parameter: updates local state immediately, sends coalesced (latest wins).
-    /// For stereo-linked strips the partner is updated too (the mixer mirrors linked
-    /// faders/mutes itself but does not echo the partner change back to us).
+    /// For stereo-linked strips the partner is updated too, solo included (the mixer mirrors
+    /// linked faders/mutes itself but does not echo the partner change back to us).
     pub fn set(&self, p: Param, v: Value) {
         let mirror = {
             let mut st = self.shared.state.write().unwrap();
