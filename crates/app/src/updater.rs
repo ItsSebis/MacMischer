@@ -74,6 +74,50 @@ pub enum State {
     Failed { update: Update, error: String },
 }
 
+/// What the banner shows for a State.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BannerView {
+    pub version: String,
+    pub notes: String,
+    pub text: &'static str,
+    pub error: Option<String>,
+}
+
+impl State {
+    /// Display data for the banner; None when nothing is shown.
+    pub fn banner(&self) -> Option<BannerView> {
+        let view = |version: &str, notes: &str, text, error: Option<&str>| {
+            Some(BannerView { version: version.into(), notes: notes.into(), text, error: error.map(String::from) })
+        };
+        match self {
+            State::Idle => None,
+            State::Available { version, notes, .. } => view(version, notes, "is available", None),
+            State::Updatable(u) => view(&u.version, &u.notes, "is available", None),
+            State::Downloading(u) => view(&u.version, "", "Downloading…", None),
+            State::Verifying(u) => view(&u.version, "", "Verifying…", None),
+            State::Ready { update, .. } => view(&update.version, "", "is downloaded and verified", None),
+            State::Installing(u) => view(&u.version, "", "Installing…", None),
+            State::Relaunching(u) => view(&u.version, "", "installed, restarting…", None),
+            State::Failed { update, error } => view(&update.version, &update.notes, "update failed", Some(error)),
+        }
+    }
+
+    /// "Later" applies: an offer or a failure the Operator can wave away.
+    pub fn is_dismissible(&self) -> bool {
+        matches!(self, State::Available { .. } | State::Updatable(_) | State::Failed { .. })
+    }
+
+    /// "Skip this version" applies: a fresh offer, not a failure.
+    pub fn is_skippable(&self) -> bool {
+        matches!(self, State::Available { .. } | State::Updatable(_))
+    }
+
+    /// The new bundle is in place and started; the app should quit.
+    pub fn should_quit(&self) -> bool {
+        matches!(self, State::Relaunching(_))
+    }
+}
+
 /// The Updater's slice of the preferences file.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -248,7 +292,7 @@ impl Updater {
 
     /// Block until the running check has finished (tests only).
     #[cfg(test)]
-    fn settle(&mut self) {
+    fn wait_for_background_work(&mut self) {
         if let Some(rx) = self.pending.take() {
             if let Ok(found) = rx.recv() {
                 self.state = found;
@@ -264,7 +308,7 @@ impl Updater {
     /// "Later": hide the banner for this launch (the check is not repeated).
     pub fn later(&mut self) {
         self.state();
-        if matches!(self.state, State::Available { .. } | State::Updatable(_) | State::Failed { .. }) {
+        if self.state.is_dismissible() {
             self.state = State::Idle;
         }
     }
@@ -311,10 +355,8 @@ impl Updater {
         self.state = State::Downloading(update);
         self.job = Some(rx);
     }
-}
 
-/// Delete the `.old` bundle a previous Update left next to the installed app.
-impl Updater {
+    /// Delete the `.old` bundle a previous Update left next to the installed app.
     pub fn cleanup_old_bundle(&self) {
         if let Install::Possible { target, installer } = &self.install {
             let old = sibling(target, ".old");
@@ -415,13 +457,16 @@ fn fetch_verified(
 /// The Available state for a feed body, if it holds a strictly newer, well-formed Release.
 fn announce(current: &str, json: &str) -> Option<State> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let version = v["tag_name"].as_str()?.trim_start_matches('v').to_string();
+    let tag = v["tag_name"].as_str()?;
+    let version = tag.trim_start_matches('v').to_string();
     if parse_version(&version)? <= parse_version(current)? {
         return None;
     }
     let notes = v["body"].as_str().unwrap_or_default().to_string();
     let url = v["html_url"].as_str()?.to_string();
-    Some(match contract_asset(&version, &v) {
+    // Contract rule 1: the tag is exactly `v<ver>`; anything else is announce-only.
+    let asset = (tag == format!("v{version}")).then(|| contract_asset(&version, &v)).flatten();
+    Some(match asset {
         Some((asset_url, sha256)) => State::Updatable(Update { version, notes, url, asset_url, sha256 }),
         None => State::Available { version, notes, url },
     })
@@ -606,7 +651,7 @@ mod tests {
     fn launched(current: &str, feed: Option<String>) -> Updater {
         let mut u = Updater::new(current, Arc::new(FakeFeed(feed)), Arc::new(FakeBrowser::default()), true);
         u.check_at_launch();
-        u.settle();
+        u.wait_for_background_work();
         u
     }
 
@@ -653,7 +698,7 @@ mod tests {
         u.later();
         assert_eq!(u.state(), &State::Idle);
         u.check_at_launch();
-        u.settle();
+        u.wait_for_background_work();
         assert_eq!(u.state(), &State::Idle);
     }
 
@@ -662,7 +707,7 @@ mod tests {
         let browser = Arc::new(FakeBrowser::default());
         let mut u = Updater::new("0.1.1", Arc::new(FakeFeed(Some(release("v0.2.0")))), browser.clone(), true);
         u.check_at_launch();
-        u.settle();
+        u.wait_for_background_work();
         u.open_release_page();
         assert_eq!(*browser.0.lock().unwrap(), vec!["https://example.test/r/v0.2.0".to_string()]);
         assert!(matches!(u.state(), State::Available { .. }));
@@ -688,7 +733,7 @@ mod tests {
         let feed = Arc::new(CountingFeed(Mutex::new(0)));
         let mut u = Updater::new("0.1.1", feed.clone(), Arc::new(FakeBrowser::default()), false);
         u.check_at_launch();
-        u.settle();
+        u.wait_for_background_work();
         assert_eq!(u.state(), &State::Idle);
         assert_eq!(*feed.0.lock().unwrap(), 0);
     }
@@ -707,7 +752,7 @@ mod tests {
         u.check_at_launch(); // returns although the feed is still waiting
         assert_eq!(u.state(), &State::Idle);
         go.send(()).unwrap();
-        u.settle();
+        u.wait_for_background_work();
         assert!(matches!(u.state(), State::Available { .. }));
     }
 
@@ -758,7 +803,7 @@ mod tests {
         let mut u = Updater::new("0.1.1", Arc::new(FakeFeed(Some(feed))), Arc::new(FakeBrowser::default()), true)
             .with_downloads(dmgs, dir.to_path_buf());
         u.check_at_launch();
-        u.settle();
+        u.wait_for_background_work();
         u
     }
 
@@ -777,7 +822,7 @@ mod tests {
         let mut u = with_dmgs(good_release(), FakeDmgs::new(Ok(DMG.to_vec())), dir.path());
         u.update_now();
         assert!(matches!(u.state(), State::Downloading(_) | State::Verifying(_) | State::Ready { .. }));
-        u.settle();
+        u.wait_for_background_work();
         let State::Ready { update, dmg } = u.state().clone() else { panic!("{:?}", u.state()) };
         assert_eq!(update.version, "0.2.0");
         assert_eq!(std::fs::read(&dmg).unwrap(), DMG);
@@ -798,11 +843,11 @@ mod tests {
         let mut u = Updater::new("0.1.1", Arc::new(FakeFeed(Some(good_release()))), Arc::new(FakeBrowser::default()), true)
             .with_downloads(Arc::new(Gated(Mutex::new(wait))), dir.path().to_path_buf());
         u.check_at_launch();
-        u.settle();
+        u.wait_for_background_work();
         u.update_now(); // returns although the download is still waiting
         assert!(matches!(u.state(), State::Downloading(_)));
         go.send(()).unwrap();
-        u.settle();
+        u.wait_for_background_work();
         assert!(matches!(u.state(), State::Ready { .. }));
     }
 
@@ -811,7 +856,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut u = with_dmgs(good_release(), FakeDmgs::new(Ok(b"tampered".to_vec())), dir.path());
         u.update_now();
-        u.settle();
+        u.wait_for_background_work();
         assert!(matches!(u.state(), State::Failed { .. }));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
@@ -821,7 +866,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut u = with_dmgs(good_release(), FakeDmgs::new(Err("offline".into())), dir.path());
         u.update_now();
-        u.settle();
+        u.wait_for_background_work();
         let State::Failed { error, .. } = u.state().clone() else { panic!("{:?}", u.state()) };
         assert!(error.contains("offline"));
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -833,11 +878,11 @@ mod tests {
         let dmgs = FakeDmgs::new(Err("offline".into()));
         let mut u = with_dmgs(good_release(), dmgs.clone(), dir.path());
         u.update_now();
-        u.settle();
+        u.wait_for_background_work();
         assert!(matches!(u.state(), State::Failed { .. }));
         *dmgs.body.lock().unwrap() = Ok(DMG.to_vec());
         u.update_now(); // Try again
-        u.settle();
+        u.wait_for_background_work();
         assert!(matches!(u.state(), State::Ready { .. }));
         assert_eq!(*dmgs.hits.lock().unwrap(), 2);
     }
@@ -848,9 +893,9 @@ mod tests {
         let dmgs = FakeDmgs::new(Ok(DMG.to_vec()));
         let mut u = with_dmgs(good_release(), dmgs.clone(), dir.path());
         u.update_now();
-        u.settle();
+        u.wait_for_background_work();
         u.update_now(); // already Ready
-        u.settle();
+        u.wait_for_background_work();
         assert!(matches!(u.state(), State::Ready { .. }));
         assert_eq!(*dmgs.hits.lock().unwrap(), 1);
         let mut idle = launched("0.1.1", None);
@@ -871,6 +916,9 @@ mod tests {
             ("digest wrong length", release_with("v0.2.0", &[asset(name, Some("sha256:abcd"))])),
             ("two matching assets", release_with("v0.2.0", &[good_asset(), good_asset()])),
             ("no assets field", release("v0.2.0")),
+            ("tag without v prefix", release_with("0.2.0", &[good_asset()])),
+            ("tag with doubled v prefix", release_with("vv0.2.0", &[good_asset()])),
+            ("tag newer than the asset's version", release_with("v0.3.0", &[good_asset()])),
         ];
         for (why, feed) in cases {
             let dir = tempfile::tempdir().unwrap();
@@ -878,10 +926,24 @@ mod tests {
             let mut u = with_dmgs(feed, dmgs.clone(), dir.path());
             assert!(matches!(u.state(), State::Available { .. }), "{why}: {:?}", u.state());
             u.update_now();
-            u.settle();
+            u.wait_for_background_work();
             assert!(matches!(u.state(), State::Available { .. }), "{why}");
             assert_eq!(*dmgs.hits.lock().unwrap(), 0, "{why}");
         }
+    }
+
+    #[test]
+    fn state_predicates_and_banner_view() {
+        let up = Update { version: "0.2.0".into(), notes: "n".into(), url: "u".into(), asset_url: "a".into(), sha256: "s".into() };
+        assert!(State::Idle.banner().is_none());
+        let offered = State::Updatable(up.clone());
+        assert_eq!(offered.banner().unwrap().text, "is available");
+        assert!(offered.is_dismissible() && offered.is_skippable() && !offered.should_quit());
+        let failed = State::Failed { update: up.clone(), error: "boom".into() };
+        assert_eq!(failed.banner().unwrap().error.as_deref(), Some("boom"));
+        assert!(failed.is_dismissible() && !failed.is_skippable());
+        assert!(!State::Downloading(up.clone()).is_dismissible());
+        assert!(State::Relaunching(up).should_quit());
     }
 
     #[test]
@@ -892,7 +954,7 @@ mod tests {
         assert_eq!(u.state(), &State::Idle);
         let mut u = with_dmgs(good_release(), FakeDmgs::new(Err("x".into())), dir.path());
         u.update_now();
-        u.settle();
+        u.wait_for_background_work();
         u.later();
         assert_eq!(u.state(), &State::Idle);
     }
@@ -910,7 +972,7 @@ mod tests {
 
     fn launch(u: &mut Updater) {
         u.check_at_launch();
-        u.settle();
+        u.wait_for_background_work();
     }
 
     #[test]
@@ -1083,7 +1145,7 @@ mod tests {
             .with_downloads(FakeDmgs::new(Ok(DMG.to_vec())), tmp.path().join("dl"))
             .with_install(target_override.unwrap_or(Some(target.clone())), installer.clone());
         updater.check_at_launch();
-        updater.settle();
+        updater.wait_for_background_work();
         Rig { _tmp: tmp, apps, target, installer, updater }
     }
 
@@ -1095,7 +1157,7 @@ mod tests {
     fn update_now_installs_the_new_bundle_strips_quarantine_and_relaunches() {
         let mut r = rig(None);
         r.updater.update_now();
-        r.updater.settle();
+        r.updater.wait_for_background_work();
         assert!(matches!(r.updater.state(), State::Relaunching(u) if u.version == "0.2.0"));
         assert_eq!(version_of(&r.target).as_deref(), Some("0.2.0"));
         assert_eq!(version_of(&r.apps.join("MacMischer.app.old")).as_deref(), Some("0.1.1"));
@@ -1126,7 +1188,7 @@ mod tests {
         for step in ["mount", "copy", "aside", "place", "strip", "relaunch"] {
             let mut r = rig(Some(step));
             r.updater.update_now();
-            r.updater.settle();
+            r.updater.wait_for_background_work();
             assert_failed_with(&mut r, step);
             assert_original_restored(&r);
         }
@@ -1136,7 +1198,7 @@ mod tests {
     fn the_mount_is_released_even_when_copying_fails() {
         let mut r = rig(Some("copy"));
         r.updater.update_now();
-        r.updater.settle();
+        r.updater.wait_for_background_work();
         assert_eq!(r.installer.did("unmount").len(), 1);
     }
 
@@ -1144,7 +1206,7 @@ mod tests {
     fn the_old_bundle_is_only_moved_aside_after_the_new_one_is_fully_copied() {
         let mut r = rig(Some("copy"));
         r.updater.update_now();
-        r.updater.settle();
+        r.updater.wait_for_background_work();
         assert!(r.installer.did("aside").is_empty());
         assert_eq!(version_of(&r.target).as_deref(), Some("0.1.1"));
     }
@@ -1153,11 +1215,11 @@ mod tests {
     fn try_again_after_a_failed_install_can_succeed() {
         let mut r = rig(Some("strip"));
         r.updater.update_now();
-        r.updater.settle();
+        r.updater.wait_for_background_work();
         assert!(matches!(r.updater.state(), State::Failed { .. }));
         *r.installer.fail.lock().unwrap() = None;
         r.updater.update_now();
-        r.updater.settle();
+        r.updater.wait_for_background_work();
         assert!(matches!(r.updater.state(), State::Relaunching(_)));
         assert_eq!(version_of(&r.target).as_deref(), Some("0.2.0"));
     }
@@ -1184,7 +1246,7 @@ mod tests {
         let mut r = rig(None);
         write(&r.apps.join("MacMischer.app.old/Contents/version.txt"), "0.0.9");
         r.updater.update_now();
-        r.updater.settle();
+        r.updater.wait_for_background_work();
         assert!(matches!(r.updater.state(), State::Relaunching(_)));
         assert_eq!(version_of(&r.apps.join("MacMischer.app.old")).as_deref(), Some("0.1.1"));
     }
@@ -1194,7 +1256,7 @@ mod tests {
     fn assert_announce_only(r: &mut Rig) {
         assert!(matches!(r.updater.state(), State::Available { version, .. } if version == "0.2.0"), "{:?}", r.updater.state());
         r.updater.update_now(); // there is no Update now to press
-        r.updater.settle();
+        r.updater.wait_for_background_work();
         assert!(matches!(r.updater.state(), State::Available { .. }));
         assert!(r.installer.did("mount").is_empty());
     }

@@ -343,25 +343,20 @@ fn help_window(ctx: &egui::Context, open: &mut bool) {
 }
 
 impl App {
+    /// Mirror the Updater's preferences into the session's copy so the next save keeps them.
+    fn sync_update_prefs(prefs: &mut crate::prefs::Prefs, updater: &crate::updater::Updater) {
+        prefs.updates = updater.prefs().clone();
+    }
+
     /// Non-blocking banner announcing a newer Release; Update now downloads, verifies and installs it.
     fn update_banner(&mut self, ui: &mut egui::Ui) {
-        use crate::updater::State;
+        use crate::updater::{BannerView, State};
         let state = self.updater.state().clone();
-        let (version, notes, text, error) = match &state {
-            State::Idle => return,
-            State::Available { version, notes, .. } => (version.clone(), notes.clone(), "is available", None),
-            State::Updatable(u) => (u.version.clone(), u.notes.clone(), "is available", None),
-            State::Downloading(u) => (u.version.clone(), String::new(), "Downloading…", None),
-            State::Verifying(u) => (u.version.clone(), String::new(), "Verifying…", None),
-            State::Ready { update, .. } => (update.version.clone(), String::new(), "is downloaded and verified", None),
-            State::Installing(u) => (u.version.clone(), String::new(), "Installing…", None),
-            State::Relaunching(u) => {
-                // The new bundle is in place and started: hand over to it.
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                (u.version.clone(), String::new(), "installed, restarting…", None)
-            }
-            State::Failed { update, error } => (update.version.clone(), update.notes.clone(), "update failed", Some(error.clone())),
-        };
+        let Some(BannerView { version, notes, text, error }) = state.banner() else { return };
+        if state.should_quit() {
+            // The new bundle is in place and started: hand over to it.
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         egui::Panel::top("update_banner").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(format!("MacMischer {version} {text}")).strong().color(theme::ACCENT));
@@ -378,14 +373,12 @@ impl App {
                         self.updater.open_release_page();
                     }
                 }
-                if matches!(state, State::Available { .. } | State::Updatable(_) | State::Failed { .. })
-                    && ui.button("Later").clicked()
-                {
+                if state.is_dismissible() && ui.button("Later").clicked() {
                     self.updater.later();
                 }
-                if matches!(state, State::Available { .. } | State::Updatable(_)) && ui.button("Skip this version").clicked() {
+                if state.is_skippable() && ui.button("Skip this version").clicked() {
                     self.updater.skip_this_version();
-                    self.session.prefs.updates = self.updater.prefs().clone();
+                    Self::sync_update_prefs(&mut self.session.prefs, &self.updater);
                 }
             });
             if let Some(e) = error {
@@ -493,7 +486,7 @@ impl eframe::App for App {
                     let mut check = self.updater.prefs().check_at_launch;
                     if ui.checkbox(&mut check, "Check for updates at launch").clicked() {
                         self.updater.set_check_at_launch(check);
-                        self.session.prefs.updates = self.updater.prefs().clone();
+                        Self::sync_update_prefs(&mut self.session.prefs, &self.updater);
                     }
                     ui.separator();
                     let clients = self.remote.clients();
