@@ -602,4 +602,42 @@ mod tests {
         r.run(vec![Action::AbToggle]); // back to A: A got the edited value saved
         assert!((r.hpf() - 0.9).abs() < 1e-6);
     }
+
+    #[test]
+    fn select_position_zero_is_a_noop() {
+        let mut r = Rig::new();
+        r.run(vec![Action::Select(StripId::Ch(2))]);
+        r.run(vec![Action::SelectPosition(0)]);
+        assert_eq!(r.console.selected(), StripId::Ch(2));
+    }
+
+    #[test]
+    fn select_position_counts_a_linked_pair_as_one() {
+        let mut r = Rig::new();
+        r.run(vec![Action::Set(Param::ChLink(1), Value::Int(1))]);
+        r.run(vec![Action::SelectPosition(2)]);
+        assert_eq!(r.console.selected(), StripId::Ch(3));
+        r.run(vec![Action::SelectPosition(1)]);
+        assert_eq!(r.console.selected(), CH1);
+    }
+
+    #[test]
+    fn undo_after_ab_swaps_restores_the_set_values() {
+        let mut r = Rig::new();
+        let start = r.fader(CH1);
+        let a = r.hpf();
+        r.run(vec![Action::Set(Param::Fader(CH1), Value::Float(0.3))]);
+        r.now += Duration::from_secs(1); // separate history steps
+        r.run(vec![Action::AbToggle]);
+        r.run(vec![Action::Set(Param::Proc(CH1, Proc::Hpf), Value::Float(0.9))]);
+        r.run(vec![Action::AbToggle]); // to B
+        r.run(vec![Action::AbToggle]); // back to A
+        assert!((r.hpf() - 0.9).abs() < 1e-6);
+        r.run(vec![Action::Undo]);
+        assert!((r.hpf() - a).abs() < 1e-6, "first undo reverts the Set, not an A/B write");
+        assert_eq!(r.fader(CH1), 0.3);
+        r.run(vec![Action::Undo]);
+        assert_eq!(r.fader(CH1), start, "second undo reverts the earlier Set");
+        assert_eq!(r.run(vec![Action::Undo]).flash.as_deref(), Some("Nothing to undo"));
+    }
 }
