@@ -50,6 +50,8 @@ pub struct App {
     rta_on: bool,
     /// Short status message (e.g. "Locked").
     flash: Option<(String, Instant)>,
+    /// Release check; independent of the Console and the mixer connection.
+    updater: crate::updater::Updater,
 }
 
 impl App {
@@ -78,6 +80,12 @@ impl App {
             show_fx: false,
             rta_on: false,
             flash: None,
+            updater: {
+                let c = ctx.clone();
+                let mut u = crate::updater::Updater::production(move || c.request_repaint());
+                u.check_at_launch();
+                u
+            },
         };
         // Dev aid for screenshots: MM_SHOW=editor|help|dca|scenes|routing opens that dialog on start.
         match std::env::var("MM_SHOW").as_deref() {
@@ -334,6 +342,30 @@ fn help_window(ctx: &egui::Context, open: &mut bool) {
         });
 }
 
+impl App {
+    /// Non-blocking banner announcing a newer Release (nothing is installed here).
+    fn update_banner(&mut self, ui: &mut egui::Ui) {
+        use crate::updater::State;
+        let State::Available { version, notes, .. } = self.updater.state().clone() else { return };
+        egui::Panel::top("update_banner").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("MacMischer {version} is available")).strong().color(theme::ACCENT));
+                if ui.button("Open release page").clicked() {
+                    self.updater.open_release_page();
+                }
+                if ui.button("Later").clicked() {
+                    self.updater.later();
+                }
+            });
+            if !notes.trim().is_empty() {
+                egui::ScrollArea::vertical().max_height(80.0).id_salt("update_notes").show(ui, |ui| {
+                    ui.label(egui::RichText::new(notes.trim()).color(theme::DIM));
+                });
+            }
+        });
+    }
+}
+
 impl eframe::App for App {
     fn on_exit(&mut self) {
         self.session.save_now();
@@ -345,6 +377,7 @@ impl eframe::App for App {
             self.midi.configure(m.enabled, m.device.as_deref(), self.midi_ui.open);
         }
         let midi_msgs = self.midi.drain();
+        self.update_banner(ui);
         if let Conn::Finding(f) = &mut self.conn {
             if let Some(addr) = f.ui(ui) {
                 self.connect(addr);

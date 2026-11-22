@@ -26,6 +26,7 @@ mod routing_view;
 mod session;
 mod show;
 mod theme;
+mod updater;
 mod views;
 mod widgets;
 
