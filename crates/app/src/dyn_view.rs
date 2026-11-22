@@ -172,7 +172,7 @@ fn comp_section(ui: &mut Ui, c: &mut Ctx, s: StripId, w: f32) {
             let knee = c.st.proc_value(s, Proc::DynKnee).unwrap_or(0.0) * 6.0;
             let expand = c.st.proc_i(s, Proc::DynMode) == 1;
             let on = c.st.proc_i(s, Proc::DynOn) != 0;
-            plot(ui, -60.0, 0.0, on, |x| comp_curve(x, thr, ratio, knee, expand));
+            plot(ui, -60.0, 0.0, on, |x| crate::eqmath::comp_curve(x, thr, ratio, knee, expand));
         });
         let bw2 = bw;
         sidechain(ui, c, s, Proc::DynFilterOn, Proc::DynFilterType, Proc::DynFilterF, bw2);
@@ -185,21 +185,6 @@ fn ratio_row(ui: &mut Ui, c: &mut Ctx, s: StripId) {
         let items: Vec<String> = RATIOS.iter().map(|r| format!("{r:.1}:1")).collect();
         combo(ui, c, s, Proc::DynRatio, &items, 60.0);
     });
-}
-
-fn comp_curve(x: f32, thr: f32, ratio: f32, knee: f32, expand: bool) -> f32 {
-    if expand {
-        return if x < thr { thr + (x - thr) * ratio } else { x };
-    }
-    let slope = 1.0 / ratio - 1.0;
-    if knee > 0.1 && (x - thr).abs() <= knee / 2.0 {
-        let d = x - thr + knee / 2.0;
-        x + slope * d * d / (2.0 * knee)
-    } else if x > thr {
-        x + slope * (x - thr)
-    } else {
-        x
-    }
 }
 
 /// Square transfer-curve plot; input dB on x from `lo` to 0, output on y from `lo` to `top`

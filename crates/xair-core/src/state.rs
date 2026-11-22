@@ -209,3 +209,59 @@ impl Meters {
         Some((*self.m1.get(i)?, *self.m1.get(i + 1)?))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xair_proto::meters::m1;
+
+    fn linked(ch_pairs: &[u8], bus_pairs: &[u8]) -> MixerState {
+        let mut st = MixerState::default();
+        for &p in ch_pairs {
+            st.values.insert(Param::ChLink(p), Value::Int(1));
+        }
+        for &p in bus_pairs {
+            st.values.insert(Param::BusLink(p), Value::Int(1));
+        }
+        st
+    }
+
+    #[test]
+    fn partner_and_leader() {
+        let st = linked(&[1], &[2]);
+        assert_eq!(st.linked_partner(StripId::Ch(1)), Some(StripId::Ch(2)));
+        assert_eq!(st.linked_partner(StripId::Ch(2)), Some(StripId::Ch(1)));
+        assert_eq!(st.linked_partner(StripId::Ch(3)), None);
+        assert_eq!(st.linked_partner(StripId::Bus(3)), Some(StripId::Bus(4)));
+        assert_eq!(st.linked_partner(StripId::Main), None);
+        assert_eq!(st.link_leader(StripId::Ch(2)), StripId::Ch(1));
+        assert_eq!(st.link_leader(StripId::Ch(1)), StripId::Ch(1));
+        assert_eq!(st.link_leader(StripId::Ch(3)), StripId::Ch(3));
+    }
+
+    #[test]
+    fn display_collapses_linked_pairs_keeping_order() {
+        let st = linked(&[1], &[]);
+        let shown = st.display_strips(&[StripId::Ch(2), StripId::Ch(3), StripId::Ch(1)]);
+        assert_eq!(shown, vec![StripId::Ch(1), StripId::Ch(3)]);
+        assert_eq!(MixerState::default().display_strips(&[StripId::Ch(2), StripId::Ch(1)]), vec![StripId::Ch(2), StripId::Ch(1)]);
+    }
+
+    #[test]
+    fn meters_read_the_right_slots() {
+        let mut m = Meters::default();
+        for (i, v) in m.m1.iter_mut().enumerate() {
+            *v = -(i as f32);
+        }
+        let at = |i: usize| -(i as f32);
+        assert_eq!(m.strip(StripId::Ch(5)), Some(at(m1::CH + 4)));
+        assert_eq!(m.strip(StripId::Bus(2)), Some(at(m1::BUS + 1)));
+        assert_eq!(m.strip(StripId::FxSend(1)), Some(at(m1::FX_SEND)));
+        assert_eq!(m.strip(StripId::Dca(1)), None);
+        // stereo strips report the louder side (values are negative: the larger one wins)
+        assert_eq!(m.strip(StripId::Main), Some(at(m1::MAIN)));
+        assert_eq!(m.stereo(StripId::Main), Some((at(m1::MAIN), at(m1::MAIN + 1))));
+        assert_eq!(m.stereo(StripId::FxRtn(2)), Some((at(m1::FX_RTN + 2), at(m1::FX_RTN + 3))));
+        assert_eq!(m.stereo(StripId::Ch(1)), None);
+    }
+}

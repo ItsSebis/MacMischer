@@ -106,6 +106,23 @@ impl Biquad {
 }
 
 /// Response of a single band in dB at `hz`.
+/// Output level (dB) of a compressor (soft knee) or expander/gate for input `x` (dB).
+/// `ratio` is the compression ratio, or for `expand` the downward slope multiplier.
+pub fn comp_curve(x: f32, thr: f32, ratio: f32, knee: f32, expand: bool) -> f32 {
+    if expand {
+        return if x < thr { thr + (x - thr) * ratio } else { x };
+    }
+    let slope = 1.0 / ratio - 1.0;
+    if knee > 0.1 && (x - thr).abs() <= knee / 2.0 {
+        let d = x - thr + knee / 2.0;
+        x + slope * d * d / (2.0 * knee)
+    } else if x > thr {
+        x + slope * (x - thr)
+    } else {
+        x
+    }
+}
+
 #[cfg(test)]
 pub fn band_db(b: &Band, hz: f32) -> f32 {
     Biquad::new(b.kind, b.hz as f64, b.gain_db as f64, b.q as f64).db_at(hz as f64) as f32
@@ -170,5 +187,30 @@ mod tests {
         let f = log_freqs(5);
         assert_eq!(f[0], 20.0);
         assert!((f[4] - 20_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn compressor_curve() {
+        let (thr, ratio) = (-20.0, 4.0);
+        // below the threshold: untouched
+        assert_eq!(comp_curve(-40.0, thr, ratio, 0.0, false), -40.0);
+        // above: slope 1/ratio
+        let a = comp_curve(-10.0, thr, ratio, 0.0, false);
+        let b = comp_curve(0.0, thr, ratio, 0.0, false);
+        assert!((a - (thr + 10.0 / ratio)).abs() < 1e-4);
+        assert!(((b - a) - 10.0 / ratio).abs() < 1e-4);
+        // soft knee is continuous at both ends and bends between them
+        let knee = 6.0;
+        let lo = thr - knee / 2.0;
+        let hi = thr + knee / 2.0;
+        assert!((comp_curve(lo, thr, ratio, knee, false) - lo).abs() < 1e-4);
+        assert!((comp_curve(hi, thr, ratio, knee, false) - comp_curve(hi + 1e-3, thr, ratio, 0.0, false)).abs() < 0.01);
+        assert!(comp_curve(thr, thr, ratio, knee, false) < thr);
+    }
+
+    #[test]
+    fn expander_curve() {
+        assert_eq!(comp_curve(-10.0, -30.0, 2.0, 0.0, true), -10.0);
+        assert_eq!(comp_curve(-40.0, -30.0, 2.0, 0.0, true), -50.0);
     }
 }
