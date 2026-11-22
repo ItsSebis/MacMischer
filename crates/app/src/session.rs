@@ -37,19 +37,8 @@ impl Session {
         let prefs = Prefs::load();
         let dir = show::shows_dir();
         let candidates = prefs.last_show.clone().into_iter().chain([show::path_for(&dir, "Default")]);
-        let mut loaded = None;
-        for p in candidates {
-            if p.exists() {
-                match Show::load(&p) {
-                    Ok(s) => {
-                        loaded = Some((s, p));
-                        break;
-                    }
-                    Err(e) => tracing::warn!("could not load show {}: {e}", p.display()),
-                }
-            }
-        }
-        let (show, path) = loaded.unwrap_or_else(|| (Show::default_show(), show::path_for(&dir, "Default")));
+        let (show, path) = show::load_first(candidates)
+            .unwrap_or_else(|| (Show::default_show(), show::path_for(&dir, "Default")));
         let mut s = Session::from_show(show, path, prefs);
         s.saved.1.clear(); // force first save so the file exists
         s.changed_at = Some(Instant::now() - AUTOSAVE_AFTER);
@@ -185,7 +174,7 @@ impl Session {
             },
             Op::New { from_current } => {
                 let name = self.new_name.trim().to_string();
-                let path = unique_path(&dir, &name);
+                let path = show::unique_path(&dir, &name);
                 let show = if from_current {
                     Show::from_template(&name, &self.to_show())
                 } else {
@@ -209,13 +198,11 @@ impl Session {
                 if name.is_empty() || name == self.name {
                     return;
                 }
-                let new_path = unique_path(&dir, &name);
+                let new_path = show::unique_path(&dir, &name);
                 self.name = name;
-                if self.path.exists() {
-                    if let Err(e) = std::fs::rename(&self.path, &new_path) {
-                        self.error = Some(format!("Rename failed: {e}"));
-                        return;
-                    }
+                if let Err(e) = show::move_file(&self.path, &new_path) {
+                    self.error = Some(format!("Rename failed: {e}"));
+                    return;
                 }
                 self.path = new_path;
                 self.saved.1.clear();
@@ -236,15 +223,4 @@ impl Session {
             }
         }
     }
-}
-
-/// `path_for(dir, name)`, adding " 2", " 3", … if that file already exists.
-fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
-    let mut p = show::path_for(dir, name);
-    let mut i = 2;
-    while p.exists() {
-        p = show::path_for(dir, &format!("{name} {i}"));
-        i += 1;
-    }
-    p
 }

@@ -135,6 +135,35 @@ pub fn path_for(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{clean}.toml"))
 }
 
+/// `path_for(dir, name)`, adding " 2", " 3", … if that file already exists.
+pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
+    let mut p = path_for(dir, name);
+    let mut i = 2;
+    while p.exists() {
+        p = path_for(dir, &format!("{name} {i}"));
+        i += 1;
+    }
+    p
+}
+
+/// The first candidate that exists and parses; unreadable ones are logged and skipped.
+pub fn load_first(candidates: impl IntoIterator<Item = PathBuf>) -> Option<(Show, PathBuf)> {
+    for p in candidates {
+        if p.exists() {
+            match Show::load(&p) {
+                Ok(s) => return Some((s, p)),
+                Err(e) => tracing::warn!("could not load show {}: {e}", p.display()),
+            }
+        }
+    }
+    None
+}
+
+/// Rename a show file; a file that was never written yet is not an error.
+pub fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from.exists() { std::fs::rename(from, to) } else { Ok(()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +226,41 @@ mod tests {
         let d = Path::new("/x");
         assert_eq!(path_for(d, "Sun/day: 1-a_b"), d.join("Sun_day_ 1-a_b.toml"));
         assert_eq!(path_for(d, ""), d.join("show.toml"));
+    }
+
+    #[test]
+    fn unique_path_counts_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = unique_path(dir.path(), "Gig");
+        assert_eq!(a, path_for(dir.path(), "Gig"));
+        std::fs::write(&a, "").unwrap();
+        let b = unique_path(dir.path(), "Gig");
+        assert_eq!(b, path_for(dir.path(), "Gig 2"));
+        std::fs::write(&b, "").unwrap();
+        assert_eq!(unique_path(dir.path(), "Gig"), path_for(dir.path(), "Gig 3"));
+    }
+
+    #[test]
+    fn load_first_skips_missing_and_corrupt_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.toml");
+        let corrupt = dir.path().join("corrupt.toml");
+        std::fs::write(&corrupt, "this is [not toml").unwrap();
+        let good = dir.path().join("good.toml");
+        Show::default_show().save(&good).unwrap();
+        let (show, path) = load_first([missing.clone(), corrupt.clone(), good.clone()]).unwrap();
+        assert_eq!(path, good);
+        assert_eq!(show.name, "Default");
+        assert!(load_first([missing, corrupt]).is_none());
+    }
+
+    #[test]
+    fn move_file_renames_and_tolerates_a_missing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.toml"), dir.path().join("b.toml"));
+        move_file(&a, &b).unwrap(); // nothing written yet: fine
+        std::fs::write(&a, "x").unwrap();
+        move_file(&a, &b).unwrap();
+        assert!(!a.exists() && b.exists());
     }
 }
