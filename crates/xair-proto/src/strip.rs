@@ -179,6 +179,37 @@ impl fmt::Display for StripId {
     }
 }
 
+/// Mic preamps 1..=16 have phantom power; the aux input pair (17/18) does not.
+pub fn headamp_has_phantom(h: u8) -> bool {
+    h <= 16
+}
+
+/// Headamp gain in dB for a 0..1 position: mic inputs −12..+60, aux line input −12..+20.
+pub fn headamp_gain_db(h: u8, v: f32) -> f32 {
+    if headamp_has_phantom(h) { v * 72.0 - 12.0 } else { v * 32.0 - 12.0 }
+}
+
+/// X Air scribble-strip colours 0..7 as RGB (index 0 = off). Codes 8..15 are the inverted
+/// variants of 0..7 (see [`scribble_inverted`]).
+pub const SCRIBBLE_RGB: [[u8; 3]; 8] = [
+    [0x5a, 0x5d, 0x64],
+    [0xe8, 0x4a, 0x4a],
+    [0x4c, 0xcf, 0x5e],
+    [0xe8, 0xd2, 0x3c],
+    [0x4a, 0x7d, 0xf0],
+    [0xd0, 0x5c, 0xe0],
+    [0x3c, 0xd0, 0xd8],
+    [0xe0, 0xe0, 0xe0],
+];
+
+pub fn scribble_rgb(code: i32) -> [u8; 3] {
+    SCRIBBLE_RGB[code.rem_euclid(8) as usize]
+}
+
+pub fn scribble_inverted(code: i32) -> bool {
+    code >= 8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,5 +243,30 @@ mod tests {
         assert_eq!(StripId::parse_prefix("/bus/7/mix/fader"), None);
         assert_eq!(StripId::parse_prefix("/foo/1"), None);
         assert_eq!(StripId::all().len(), 16 + 1 + 4 + 6 + 4 + 4 + 1);
+    }
+}
+
+#[cfg(test)]
+mod gain_color_tests {
+    use super::*;
+
+    #[test]
+    fn gain_scales_differ_for_the_aux_input() {
+        assert_eq!(headamp_gain_db(1, 0.0), -12.0);
+        assert_eq!(headamp_gain_db(1, 1.0), 60.0);
+        assert_eq!(headamp_gain_db(17, 1.0), 20.0);
+    }
+
+    #[test]
+    fn phantom_only_on_mic_preamps() {
+        assert!(headamp_has_phantom(16));
+        assert!(!headamp_has_phantom(17));
+    }
+
+    #[test]
+    fn scribble_codes_wrap_and_invert() {
+        assert_eq!(scribble_rgb(1), scribble_rgb(9));
+        assert!(!scribble_inverted(7) && scribble_inverted(8));
+        assert_eq!(scribble_rgb(0), SCRIBBLE_RGB[0]);
     }
 }

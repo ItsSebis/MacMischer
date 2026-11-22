@@ -23,18 +23,10 @@ pub const PHANTOM: Color32 = Color32::from_rgb(0xff, 0x8a, 0x3d);
 pub const OK: Color32 = Color32::from_rgb(0x3d, 0xd6, 0x6b);
 pub const WARN: Color32 = Color32::from_rgb(0xf2, 0xc9, 0x4c);
 
-/// X Air scribble-strip colours 0..15 (8..15 = inverted variants of 0..7).
+/// X Air scribble-strip colour (palette lives in xair-proto, shared with the web remote).
 pub fn strip_color(code: i32) -> Color32 {
-    match code.rem_euclid(8) {
-        1 => Color32::from_rgb(0xe8, 0x4a, 0x4a),
-        2 => Color32::from_rgb(0x4c, 0xcf, 0x5e),
-        3 => Color32::from_rgb(0xe8, 0xd2, 0x3c),
-        4 => Color32::from_rgb(0x4a, 0x7d, 0xf0),
-        5 => Color32::from_rgb(0xd0, 0x5c, 0xe0),
-        6 => Color32::from_rgb(0x3c, 0xd0, 0xd8),
-        7 => Color32::from_rgb(0xe0, 0xe0, 0xe0),
-        _ => Color32::from_rgb(0x5a, 0x5d, 0x64), // off
-    }
+    let [r, g, b] = xair_proto::strip::scribble_rgb(code);
+    Color32::from_rgb(r, g, b)
 }
 
 pub fn apply(ctx: &egui::Context) {

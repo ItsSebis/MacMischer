@@ -267,15 +267,7 @@ fn level_param(s: StripId, page: &PageConfig) -> Param {
     Param::level(s, page.bus)
 }
 
-fn color_hex(code: i32) -> &'static str {
-    match code.rem_euclid(8) {
-        1 => "#e84a4a",
-        2 => "#4ccf5e",
-        3 => "#e8d23c",
-        4 => "#4a7df0",
-        5 => "#d05ce0",
-        6 => "#3cd0d8",
-        7 => "#e0e0e0",
-        _ => "#5a5d64",
-    }
+fn color_hex(code: i32) -> String {
+    let [r, g, b] = xair_proto::strip::scribble_rgb(code);
+    format!("#{r:02x}{g:02x}{b:02x}")
 }

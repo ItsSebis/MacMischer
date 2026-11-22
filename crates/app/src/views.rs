@@ -177,7 +177,7 @@ fn name_tag(ui: &mut Ui, c: &mut Ctx, s: StripId, width: f32) {
 fn name_tag_with(ui: &mut Ui, c: &mut Ctx, s: StripId, width: f32, mut name: String, max_chars: usize) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::click());
     let col = theme::strip_color(c.st.color(s));
-    let inverted = c.st.color(s) >= 8;
+    let inverted = xair_proto::strip::scribble_inverted(c.st.color(s));
     let p = ui.painter();
     let (bg, fg) = if inverted { (col, egui::Color32::BLACK) } else { (theme::BG, col) };
     p.rect_filled(rect, 3.0, bg);
@@ -386,11 +386,6 @@ pub fn meter_bridge(ui: &mut Ui, c: &mut Ctx) {
     });
 }
 
-/// Headamp gain in dB: mic inputs −12..+60, aux line input −12..+20.
-fn gain_db(headamp: u8, v: f32) -> f32 {
-    if headamp <= 16 { v * 72.0 - 12.0 } else { v * 32.0 - 12.0 }
-}
-
 /// Detail panel for the selected strip.
 pub fn detail(ui: &mut Ui, c: &mut Ctx) {
     let s = c.selected;
@@ -459,11 +454,11 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
             section(ui, "INPUT");
             if let Some(h) = s.headamp() {
                 let g = c.st.gain(h);
-                ui.label(format!("Gain  {:+.1} dB", gain_db(h, g)));
+                ui.label(format!("Gain  {:+.1} dB", xair_proto::strip::headamp_gain_db(h, g)));
                 if let Some(v) = widgets::hbar(ui, Vec2::new(200.0, 14.0), g, false, egui::Id::unique(("gain", h))) {
                     c.actions.push(Action::Set(Param::Gain(h), Value::Float(v)));
                 }
-                if h <= 16 {
+                if xair_proto::strip::headamp_has_phantom(h) {
                     let ph = c.st.phantom(h);
                     if widgets::toggle(ui, Vec2::new(64.0, 22.0), "+48V", ph, theme::PHANTOM).clicked() {
                         c.actions.push(Action::Set(Param::Phantom(h), Value::Int(!ph as i32)));

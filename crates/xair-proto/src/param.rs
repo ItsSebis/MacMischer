@@ -299,8 +299,8 @@ impl Param {
         }
         for h in 1..=18 {
             v.push(Param::Gain(h));
-            if h <= 16 {
-                v.push(Param::Phantom(h)); // aux in 17/18 has no phantom
+            if crate::strip::headamp_has_phantom(h) {
+                v.push(Param::Phantom(h));
             }
         }
         for n in 1..=crate::strip::MUTE_GROUPS {
