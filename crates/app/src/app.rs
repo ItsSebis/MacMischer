@@ -81,7 +81,7 @@ impl App {
         };
         // Dev aid for screenshots: MM_SHOW=editor|help|dca|scenes|routing opens that dialog on start.
         match std::env::var("MM_SHOW").as_deref() {
-            Ok("editor") => app.editor = Some(BankEditor::open(0, &app.session.banks[0])),
+            Ok("editor") => app.editor = Some(BankEditor::open(0, &app.session.banks.list()[0])),
             Ok("help") => app.show_help = true,
             Ok("dca") => app.console.select(StripId::Dca(1)),
             Ok("scenes") => app.scenes.open = true,
@@ -132,7 +132,7 @@ impl App {
     }
 
     fn current_bank(&self) -> &Bank {
-        &self.session.banks[self.session.bank]
+        self.session.banks.current()
     }
 
     /// Translate keyboard events into actions.
@@ -189,14 +189,11 @@ impl App {
             match a {
                 Action::SelectBank(i) => {
                     self.flush(&m, &mut batch);
-                    if i < self.session.banks.len() {
-                        self.session.bank = i;
-                    }
+                    self.session.banks.select(i);
                 }
                 Action::BankStep(d) => {
                     self.flush(&m, &mut batch);
-                    let n = self.session.banks.len() as i32;
-                    self.session.bank = (self.session.bank as i32 + d).rem_euclid(n) as usize;
+                    self.session.banks.step(d);
                 }
                 Action::OpenScenes => self.scenes.open = !self.scenes.open,
                 Action::OpenRouting => self.show_routing = !self.show_routing,
@@ -215,7 +212,7 @@ impl App {
         if batch.is_empty() {
             return;
         }
-        let bank = &self.session.banks[self.session.bank];
+        let bank = self.session.banks.current();
         let env = Env {
             bank_strips: &bank.strips,
             level_bus: bank.bus,
@@ -264,12 +261,12 @@ impl App {
             ui.separator();
             let mut edit = None;
             let mut delete = None;
-            for (i, b) in self.session.banks.iter().enumerate() {
+            for (i, b) in self.session.banks.list().iter().enumerate() {
                 let mut label = egui::RichText::new(format!("F{}  {}", i + 1, b.name));
                 if b.bus.is_some() {
                     label = label.color(theme::SOLO);
                 }
-                let r = ui.selectable_label(i == self.session.bank, label);
+                let r = ui.selectable_label(i == self.session.banks.index(), label);
                 if r.clicked() {
                     actions.push(Action::SelectBank(i));
                 }
@@ -286,18 +283,13 @@ impl App {
                 });
             }
             if ui.button(" + ").on_hover_text("New bank").clicked() {
-                self.session.banks.push(Bank::new("New bank", []));
-                edit = Some(self.session.banks.len() - 1);
-                self.session.bank = self.session.banks.len() - 1;
+                edit = Some(self.session.banks.add(Bank::new("New bank", [])));
             }
             if let Some(i) = delete {
-                if self.session.banks.len() > 1 {
-                    self.session.banks.remove(i);
-                    self.session.bank = self.session.bank.min(self.session.banks.len() - 1);
-                }
+                self.session.banks.delete(i);
             }
             if let Some(i) = edit {
-                self.editor = Some(BankEditor::open(i, &self.session.banks[i]));
+                self.editor = Some(BankEditor::open(i, &self.session.banks.list()[i]));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("?").on_hover_text("Keyboard shortcuts").clicked() {
@@ -368,7 +360,7 @@ impl eframe::App for App {
         let st_guard = mixer.state();
         let meters = mixer.meters().clone();
         let st = &*st_guard;
-        let bank = &self.session.banks[self.session.bank];
+        let bank = self.session.banks.current();
         let mut c = views::Ctx {
             st,
             meters: &meters,
@@ -535,8 +527,8 @@ impl eframe::App for App {
                 &mut self.session.remote,
                 status,
                 clients,
-                &self.session.banks,
-                self.session.bank,
+                self.session.banks.list(),
+                self.session.banks.index(),
                 &names,
             );
         }
@@ -553,7 +545,7 @@ impl eframe::App for App {
         if let Some(ed) = &mut self.editor {
             if let Some(result) = ed.show(&ctx, &names) {
                 if let Some((i, bank)) = result {
-                    self.session.banks[i] = bank;
+                    self.session.banks.replace(i, bank);
                 }
                 self.editor = None;
             }

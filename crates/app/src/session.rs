@@ -1,6 +1,6 @@
 //! The open show: banks, file location, autosave, and the Show menu.
 
-use crate::banks::Bank;
+use crate::banks::BankSet;
 use crate::prefs::Prefs;
 use crate::show::{self, Show};
 use crate::theme;
@@ -11,13 +11,12 @@ use std::time::{Duration, Instant};
 const AUTOSAVE_AFTER: Duration = Duration::from_millis(800);
 
 pub struct Session {
-    pub banks: Vec<Bank>,
-    pub bank: usize,
+    pub banks: BankSet,
     pub name: String,
     pub path: PathBuf,
     pub prefs: Prefs,
     pub remote: xair_remote::RemoteConfig,
-    saved: (Vec<Bank>, usize, String, xair_remote::RemoteConfig),
+    saved: (BankSet, String, xair_remote::RemoteConfig),
     changed_at: Option<Instant>,
     new_name: String,
     rename: String,
@@ -52,17 +51,17 @@ impl Session {
         }
         let (show, path) = loaded.unwrap_or_else(|| (Show::default_show(), show::path_for(&dir, "Default")));
         let mut s = Session::from_show(show, path, prefs);
-        s.saved.2.clear(); // force first save so the file exists
+        s.saved.1.clear(); // force first save so the file exists
         s.changed_at = Some(Instant::now() - AUTOSAVE_AFTER);
         s
     }
 
     fn from_show(show: Show, path: PathBuf, prefs: Prefs) -> Session {
+        let banks = BankSet::new(show.banks, show.current_bank);
         Session {
-            saved: (show.banks.clone(), show.current_bank, show.name.clone(), show.remote.clone()),
+            saved: (banks.clone(), show.name.clone(), show.remote.clone()),
             remote: show.remote,
-            banks: show.banks,
-            bank: show.current_bank,
+            banks,
             rename: show.name.clone(),
             name: show.name,
             path,
@@ -74,12 +73,17 @@ impl Session {
     }
 
     fn to_show(&self) -> Show {
-        Show { name: self.name.clone(), banks: self.banks.clone(), current_bank: self.bank, remote: self.remote.clone() }
+        Show {
+            name: self.name.clone(),
+            banks: self.banks.list().to_vec(),
+            current_bank: self.banks.index(),
+            remote: self.remote.clone(),
+        }
     }
 
     /// Write the show now if anything changed.
     pub fn save_now(&mut self) {
-        let snapshot = (self.banks.clone(), self.bank, self.name.clone(), self.remote.clone());
+        let snapshot = (self.banks.clone(), self.name.clone(), self.remote.clone());
         if snapshot == self.saved {
             return;
         }
@@ -97,10 +101,7 @@ impl Session {
 
     /// Call once per frame: saves shortly after the last change.
     pub fn autosave(&mut self, ctx: &egui::Context) {
-        let dirty = self.banks != self.saved.0
-            || self.bank != self.saved.1
-            || self.name != self.saved.2
-            || self.remote != self.saved.3;
+        let dirty = self.banks != self.saved.0 || self.name != self.saved.1 || self.remote != self.saved.2;
         if !dirty {
             self.changed_at = None;
             return;
@@ -192,14 +193,14 @@ impl Session {
                 };
                 self.new_name.clear();
                 self.switch_to(path, show);
-                self.saved.2.clear(); // write the new file right away
+                self.saved.1.clear(); // write the new file right away
                 self.save_now();
             }
             Op::Import(path) => match Show::load(&path) {
                 Ok(other) => {
                     let mut cur = self.to_show();
                     cur.import_banks(&other);
-                    self.banks = cur.banks;
+                    self.banks = BankSet::new(cur.banks, self.banks.index());
                 }
                 Err(e) => self.error = Some(format!("Could not import: {e}")),
             },
@@ -217,7 +218,7 @@ impl Session {
                     }
                 }
                 self.path = new_path;
-                self.saved.2.clear();
+                self.saved.1.clear();
                 self.save_now();
             }
             Op::RevealFolder => {

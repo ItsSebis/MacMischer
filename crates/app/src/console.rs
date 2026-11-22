@@ -10,7 +10,7 @@ use crate::widgets::UNITY;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use xair_core::Mixer;
-use xair_proto::{Param, SendTo, StripId, Value};
+use xair_proto::{Param, Proc, SendTo, StripId, Value};
 
 /// Fader/pan MIDI is ignored this long after a scene recall while the mixer re-reads its state.
 const RESYNC: Duration = Duration::from_millis(600);
@@ -225,17 +225,10 @@ impl Console {
                     say(out, "No processing on this strip".into());
                     return;
                 }
-                let live: crate::ab::Snapshot = params
-                    .iter()
-                    .filter_map(|&p| {
-                        let p = Param::Proc(s, p);
-                        m.state().get(p).cloned().map(|v| (p, v))
-                    })
-                    .collect();
-                if live.len() < params.len() {
+                let Some(live) = proc_snapshot(&m.state(), [s], &params) else {
                     say(out, "A/B: mixer still syncing".into());
                     return;
-                }
+                };
                 let writes = match a {
                     Action::AbSelect(slot) => self.ab.select(s, slot, live),
                     _ => self.ab.toggle(s, live),
@@ -330,24 +323,16 @@ impl Console {
             return None;
         }
         self.pending_load = None;
-        let st = m.state();
         // The linked partner follows the leader on the mixer; remember its old values too.
-        let partner = st.linked_partner(s);
-        let mut old: crate::ab::Snapshot = Vec::new();
-        for x in std::iter::once(s).chain(partner) {
-            for (p, _) in &pl.writes {
-                if let Param::Proc(_, pr) = p {
-                    let q = Param::Proc(x, *pr);
-                    if let Some(v) = st.get(q).cloned() {
-                        old.push((q, v));
-                    }
-                }
-            }
-        }
-        drop(st);
-        if old.len() < pl.writes.len() * (1 + usize::from(partner.is_some())) {
+        let (partner, old) = {
+            let st = m.state();
+            let partner = st.linked_partner(s);
+            let params: Vec<Proc> = pl.writes.iter().filter_map(|(p, _)| if let Param::Proc(_, pr) = p { Some(*pr) } else { None }).collect();
+            (partner, proc_snapshot(&st, std::iter::once(s).chain(partner), &params))
+        };
+        let Some(old) = old else {
             return Some("Preset: mixer still syncing".into());
-        }
+        };
         // Direct writes (not `put`): one "Undo preset" instead of ~50 history steps.
         for (p, v) in &pl.writes {
             m.set(*p, v.clone());
@@ -371,6 +356,22 @@ fn invalidate_preset_undo(undo: &mut Option<PresetUndo>, p: Param) {
     if stale {
         *undo = None;
     }
+}
+
+/// Current values of `params` on each of `strips`; `None` if any is not synced yet.
+fn proc_snapshot(
+    st: &xair_core::MixerState,
+    strips: impl IntoIterator<Item = StripId>,
+    params: &[Proc],
+) -> Option<crate::ab::Snapshot> {
+    let mut snap = Vec::new();
+    for x in strips {
+        for &pr in params {
+            let q = Param::Proc(x, pr);
+            snap.push((q, st.get(q)?.clone()));
+        }
+    }
+    Some(snap)
 }
 
 /// Set a parameter, remembering its previous value for undo.
