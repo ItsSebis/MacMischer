@@ -488,6 +488,8 @@ impl eframe::App for App {
                         self.updater.set_check_at_launch(check);
                         Self::sync_update_prefs(&mut self.session.prefs, &self.updater);
                     }
+                    ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).color(theme::DIM))
+                        .on_hover_text("MacMischer version");
                     ui.separator();
                     let clients = self.remote.clients();
                     let rtxt = match (self.session.remote.enabled, clients) {

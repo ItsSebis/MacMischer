@@ -45,7 +45,7 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("MacMischer")
+            .with_title(concat!("MacMischer ", env!("CARGO_PKG_VERSION")))
             .with_app_id("macmischer")
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([1000.0, 640.0])
