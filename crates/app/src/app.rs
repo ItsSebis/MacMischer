@@ -343,20 +343,44 @@ fn help_window(ctx: &egui::Context, open: &mut bool) {
 }
 
 impl App {
-    /// Non-blocking banner announcing a newer Release (nothing is installed here).
+    /// Non-blocking banner announcing a newer Release; Update now downloads and verifies it.
     fn update_banner(&mut self, ui: &mut egui::Ui) {
         use crate::updater::State;
-        let State::Available { version, notes, .. } = self.updater.state().clone() else { return };
+        let state = self.updater.state().clone();
+        let (version, notes, text, error) = match &state {
+            State::Idle => return,
+            State::Available { version, notes, .. } => (version.clone(), notes.clone(), "is available", None),
+            State::Updatable(u) => (u.version.clone(), u.notes.clone(), "is available", None),
+            State::Downloading(u) => (u.version.clone(), String::new(), "Downloading…", None),
+            State::Verifying(u) => (u.version.clone(), String::new(), "Verifying…", None),
+            State::Ready { update, .. } => (update.version.clone(), String::new(), "is downloaded and verified", None),
+            State::Failed { update, error } => (update.version.clone(), update.notes.clone(), "update failed", Some(error.clone())),
+        };
         egui::Panel::top("update_banner").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!("MacMischer {version} is available")).strong().color(theme::ACCENT));
-                if ui.button("Open release page").clicked() {
-                    self.updater.open_release_page();
+                ui.label(egui::RichText::new(format!("MacMischer {version} {text}")).strong().color(theme::ACCENT));
+                let (label, update) = match &state {
+                    State::Available { .. } => ("Open release page", false),
+                    State::Updatable(_) => ("Update now", true),
+                    State::Failed { .. } => ("Try again", true),
+                    _ => ("", false),
+                };
+                if !label.is_empty() && ui.button(label).clicked() {
+                    if update {
+                        self.updater.update_now();
+                    } else {
+                        self.updater.open_release_page();
+                    }
                 }
-                if ui.button("Later").clicked() {
+                if matches!(state, State::Available { .. } | State::Updatable(_) | State::Failed { .. })
+                    && ui.button("Later").clicked()
+                {
                     self.updater.later();
                 }
             });
+            if let Some(e) = error {
+                ui.label(egui::RichText::new(e).color(theme::DIM));
+            }
             if !notes.trim().is_empty() {
                 egui::ScrollArea::vertical().max_height(80.0).id_salt("update_notes").show(ui, |ui| {
                     ui.label(egui::RichText::new(notes.trim()).color(theme::DIM));
