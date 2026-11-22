@@ -271,3 +271,126 @@ fn color_hex(code: i32) -> String {
     let [r, g, b] = xair_proto::strip::scribble_rgb(code);
     format!("#{r:02x}{g:02x}{b:02x}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::sync::RwLock;
+    use xair_core::Timing;
+    use xair_mock::MockMixer;
+
+    struct Rig {
+        _mock: MockMixer,
+        mixer: Arc<Mixer>,
+        s: Session,
+    }
+
+    fn rig(pin: &str, pages: Vec<PageConfig>) -> Rig {
+        let mock = MockMixer::start();
+        let timing = Timing { lost_after: Duration::from_millis(500), hello_every: Duration::from_millis(100), ..Timing::default() };
+        let mixer = Arc::new(Mixer::connect_with(mock.addr(), timing));
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while mixer.status() != Status::Connected {
+            assert!(std::time::Instant::now() < end, "mock mixer did not connect");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let config = crate::config::RemoteConfig { pin: pin.into(), pages, ..Default::default() };
+        let shared = Arc::new(Shared {
+            mixer: RwLock::new(Some(mixer.clone())),
+            config: RwLock::new(config),
+            locked: AtomicBool::new(false),
+            clients: AtomicUsize::new(0),
+            config_gen: AtomicUsize::new(0),
+        });
+        let authed = pin.is_empty();
+        Rig { _mock: mock, mixer, s: Session { shared, authed, pin_tries: 0, page: None, last_state: None, gen: 0 } }
+    }
+
+    fn page() -> Vec<PageConfig> {
+        vec![PageConfig::new("p", vec![StripId::Ch(1), StripId::Main], None)]
+    }
+
+    fn open(r: &mut Rig) {
+        let mut out = Vec::new();
+        r.s.handle(In::Open { page: 0 }, &mut out);
+    }
+
+    fn errors(out: &[Json]) -> Vec<String> {
+        out.iter().filter(|m| m["t"] == "error").map(|m| m["msg"].as_str().unwrap().to_string()).collect()
+    }
+
+    fn level(strip: &str, value: f32) -> In {
+        In::Level { strip: strip.into(), value }
+    }
+
+    #[test]
+    fn commands_need_the_pin_first() {
+        let mut r = rig("1234", page());
+        let mut out = Vec::new();
+        r.s.handle(level("1", 0.5), &mut out);
+        assert_eq!(errors(&out), ["PIN required"]);
+        out.clear();
+        r.s.handle(In::Auth { pin: "1234".into() }, &mut out);
+        assert!(r.s.authed);
+    }
+
+    #[test]
+    fn pin_attempts_are_limited() {
+        let mut r = rig("1234", page());
+        let mut out = Vec::new();
+        for _ in 0..MAX_PIN_TRIES {
+            r.s.handle(In::Auth { pin: "0000".into() }, &mut out);
+        }
+        out.clear();
+        r.s.handle(In::Auth { pin: "1234".into() }, &mut out);
+        assert_eq!(errors(&out), ["too many attempts"]);
+        assert!(!r.s.authed, "even the right PIN is refused after too many tries");
+    }
+
+    #[test]
+    fn only_strips_on_the_open_page_can_be_controlled() {
+        let mut r = rig("", page());
+        open(&mut r);
+        let before = r.mixer.state().fader(StripId::Ch(2));
+        let mut out = Vec::new();
+        r.s.handle(level("2", 0.1), &mut out);
+        assert_eq!(errors(&out), ["strip not on this page"]);
+        assert_eq!(r.mixer.state().fader(StripId::Ch(2)), before);
+    }
+
+    #[test]
+    fn lock_blocks_levels_but_not_mutes_or_the_main_fader() {
+        let mut r = rig("", page());
+        open(&mut r);
+        r.s.shared.locked.store(true, Ordering::Relaxed);
+        let before = r.mixer.state().fader(StripId::Ch(1));
+        let mut out = Vec::new();
+        r.s.handle(level("1", 0.1), &mut out);
+        assert_eq!(errors(&out), ["Console is locked"]);
+        assert!(r.s.last_state.is_none(), "real value is re-sent");
+        assert_eq!(r.mixer.state().fader(StripId::Ch(1)), before);
+        out.clear();
+        r.s.handle(In::Mute { strip: "1".into(), muted: true }, &mut out);
+        assert!(errors(&out).is_empty() && !r.mixer.state().on(StripId::Ch(1)));
+        r.s.handle(level("LR", 0.3), &mut out);
+        assert!(errors(&out).is_empty());
+        assert!((r.mixer.state().fader(StripId::Main) - 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn level_is_quantized_capped_and_ignores_non_finite() {
+        let mut pages = page();
+        pages[0].max_db = Some(-10.0);
+        let cap = pages[0].max_value();
+        let mut r = rig("", pages);
+        open(&mut r);
+        let mut out = Vec::new();
+        r.s.handle(level("1", 1.0), &mut out);
+        assert_eq!(r.mixer.state().fader(StripId::Ch(1)), cap);
+        let at = r.mixer.state().fader(StripId::Ch(1));
+        r.s.handle(level("1", f32::NAN), &mut out);
+        assert_eq!(r.mixer.state().fader(StripId::Ch(1)), at);
+        assert!(errors(&out).is_empty());
+    }
+}
