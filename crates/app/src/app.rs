@@ -2,6 +2,7 @@
 
 use crate::actions::Action;
 use crate::console::{Console, Env};
+use crate::midi::input::{Frame, MidiInput, MixerView};
 use crate::bank_editor::BankEditor;
 use crate::banks::Bank;
 use crate::scenes::ScenesUi;
@@ -18,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use crate::connect::{parse_addr, Finder};
 use xair_core::{Mixer, Status};
-use xair_proto::{Param, StripId, Value};
+use xair_proto::StripId;
 
 enum Conn {
     Finding(Finder),
@@ -40,11 +41,8 @@ pub struct App {
     remote: xair_remote::Remote,
     show_remote: bool,
     midi: crate::midi::MidiService,
-    midi_engine: crate::midi::Engine,
+    midi_input: MidiInput,
     midi_ui: crate::midi_view::MidiUi,
-    midi_hold: Option<crate::midi::Hold>,
-    /// What the MIDI mapping last saw; a change re-arms soft takeover.
-    midi_sig: Option<(crate::midi::MidiStatus, bool, Option<String>, Vec<crate::midi::Binding>)>,
     view: views::DetailView,
     show_routing: bool,
     show_fx: bool,
@@ -73,10 +71,8 @@ impl App {
             remote: xair_remote::Remote::new(),
             show_remote: false,
             midi: crate::midi::MidiService::new(ctx.clone()),
-            midi_engine: Default::default(),
+            midi_input: Default::default(),
             midi_ui: Default::default(),
-            midi_hold: None,
-            midi_sig: None,
             view: views::DetailView::Mix,
             show_routing: false,
             show_fx: false,
@@ -109,7 +105,7 @@ impl App {
     fn switch_mixer(&mut self) {
         self.console.reset();
         self.rta_on = false;
-        self.midi_engine.reset();
+        self.midi_input.reset();
         let current = match &self.conn {
             Conn::Mixer(m) => Some(m.addr()),
             Conn::Finding(_) => None,
@@ -228,70 +224,38 @@ impl App {
         };
         let out = self.console.apply(m, &env, batch.drain(..));
         if out.recalled {
-            self.midi_engine.reset();
+            self.midi_input.reset();
         }
         if let Some(msg) = out.flash {
             self.flash = Some((msg, Instant::now()));
         }
     }
 
-    /// Handle MIDI messages: feed an active Learn, otherwise map them to actions.
+    /// Handle MIDI messages (Learn, hold, soft takeover, mapping) via [`MidiInput`].
     /// Returns true when the bindings changed (prefs need saving).
     fn midi_input(&mut self, msgs: Vec<crate::midi::MidiMsg>, actions: &mut Vec<Action>) -> bool {
-        use crate::midi::{hold_suppresses, learn, Hold, LearnOutcome};
-        // Re-arm soft takeover whenever the situation changes (device, bindings, caps, enable).
-        let m = &self.session.prefs.midi;
-        let sig = (self.midi.status(), m.enabled, m.device.clone(), m.bindings.clone());
-        if self.midi_sig.as_ref() != Some(&sig) {
-            self.midi_engine.reset();
-            self.midi_sig = Some(sig);
-        }
         let Conn::Mixer(m) = &self.conn else { return false };
         let now = Instant::now();
-        let mut changed = false;
-        let mut pending = Vec::new();
-        for msg in msgs {
-            self.midi_ui.last_msg = Some(msg);
-            if let Some(req) = self.midi_ui.learning {
-                match learn(&mut self.session.prefs.midi.bindings, &req, msg) {
-                    // Not usable for learning: handle normally.
-                    LearnOutcome::Ignored => {}
-                    LearnOutcome::Bound(_) => {
-                        self.midi_ui.learning = None;
-                        self.midi_ui.note = Some(format!("Bound {}", msg.describe()));
-                        self.midi_hold = Some(Hold { key: msg.key(), at: now });
-                        changed = true;
-                        continue;
-                    }
-                    LearnOutcome::Taken(text) => {
-                        self.midi_ui.note = Some(text);
-                        continue;
-                    }
-                }
-            }
-            if !hold_suppresses(&mut self.midi_hold, msg, now) {
-                pending.push(msg);
-            }
-        }
-        if pending.is_empty() {
-            return changed;
-        }
-        let resyncing = !matches!(m.status(), Status::Connected)
-            || self.console.resyncing(Instant::now());
+        let resyncing = !matches!(m.status(), Status::Connected) || self.console.resyncing(now);
         let st = m.state();
-        let view = MixerView { st: &st };
-        let (acts, errors) = self.midi_engine.process(
-            &self.session.prefs.midi.bindings,
-            &pending,
-            &view,
-            self.session.prefs.safe_mode,
-            resyncing,
+        let fed = self.midi_input.feed(
+            msgs,
+            Frame {
+                prefs: &mut self.session.prefs.midi,
+                learn: &mut self.midi_ui.learn,
+                status: self.midi.status(),
+                view: &MixerView { st: &st },
+                safe_mode: self.session.prefs.safe_mode,
+                resyncing,
+                now,
+            },
         );
-        actions.extend(acts);
-        if let Some(text) = errors.into_iter().next() {
+        drop(st);
+        actions.extend(fed.actions);
+        if let Some(text) = fed.error {
             self.flash = Some((text, Instant::now()));
         }
-        changed
+        fed.bindings_changed
     }
 
     fn bank_tabs(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
@@ -344,32 +308,6 @@ impl App {
                 }
             });
         });
-    }
-}
-
-/// Mixer state as seen by the MIDI mapping.
-struct MixerView<'a> {
-    st: &'a xair_core::MixerState,
-}
-
-impl crate::midi::View for MixerView<'_> {
-    fn fader(&self, s: StripId) -> Option<f32> {
-        self.st.get(Param::Fader(s)).and_then(Value::as_f32)
-    }
-    fn pan(&self, s: StripId) -> Option<f32> {
-        self.st.get(Param::Pan(s)).and_then(Value::as_f32)
-    }
-    fn muted(&self, s: StripId) -> Option<bool> {
-        self.st.get(Param::On(s)).and_then(Value::as_i32).map(|v| v == 0)
-    }
-    fn soloed(&self, s: StripId) -> Option<bool> {
-        self.st.get(Param::Solo(s.solo_index())).and_then(Value::as_i32).map(|v| v != 0)
-    }
-    fn partner(&self, s: StripId) -> Option<StripId> {
-        self.st.linked_partner(s)
-    }
-    fn scene_name(&self, n: u8) -> String {
-        self.st.snap_name(n)
     }
 }
 

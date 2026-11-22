@@ -1,6 +1,7 @@
 //! MIDI settings window: enable, device, binding table, Learn.
 
-use crate::midi::{LearnReq, MidiMsg, MidiPrefs, MidiService, MidiStatus, Target, TargetKind};
+use crate::midi::input::LearnState;
+use crate::midi::{LearnReq, MidiPrefs, MidiService, MidiStatus, Target, TargetKind};
 use crate::theme;
 use crate::widgets::{icon_button, Icon};
 use eframe::egui;
@@ -9,10 +10,7 @@ use xair_proto::StripId;
 
 pub struct MidiUi {
     pub open: bool,
-    /// Waiting for the next CC / note to bind.
-    pub learning: Option<LearnReq>,
-    pub last_msg: Option<MidiMsg>,
-    pub note: Option<String>,
+    pub learn: LearnState,
     kind: TargetKind,
     strip: StripId,
     scene: u8,
@@ -20,7 +18,7 @@ pub struct MidiUi {
 
 impl Default for MidiUi {
     fn default() -> Self {
-        MidiUi { open: false, learning: None, last_msg: None, note: None, kind: TargetKind::Fader, strip: StripId::Ch(1), scene: 1 }
+        MidiUi { open: false, learn: LearnState::default(), kind: TargetKind::Fader, strip: StripId::Ch(1), scene: 1 }
     }
 }
 
@@ -49,7 +47,7 @@ pub fn midi_window(
     safe_mode: bool,
 ) -> bool {
     if !ui_state.open {
-        ui_state.learning = None;
+        ui_state.learn.learning = None;
         return false;
     }
     let mut changed = false;
@@ -91,7 +89,7 @@ pub fn midi_window(
                     MidiStatus::Error(e) => (e, theme::MUTE),
                 };
                 ui.label(egui::RichText::new(text).color(color));
-                if let Some(m) = ui_state.last_msg {
+                if let Some(m) = ui_state.learn.last_msg {
                     ui.label(egui::RichText::new(format!("Last message: {}", m.describe())).monospace().size(11.0).color(theme::DIM));
                 }
                 if safe_mode {
@@ -113,14 +111,14 @@ pub fn midi_window(
                 bindings_table(ui, ui_state, cfg, names, &mut changed);
                 ui.separator();
                 add_form(ui, ui_state, names);
-                if let Some(n) = &ui_state.note {
+                if let Some(n) = &ui_state.learn.note {
                     ui.colored_label(theme::WARN, n);
                 }
             });
         });
     ui_state.open = open;
     if !open {
-        ui_state.learning = None;
+        ui_state.learn.learning = None;
     }
     changed
 }
@@ -149,11 +147,11 @@ fn bindings_table(ui: &mut egui::Ui, st: &mut MidiUi, cfg: &mut MidiPrefs, names
                 }
             });
             ui.horizontal(|ui| {
-                let learning = st.learning.is_some_and(|l| l.replace == Some(i));
+                let learning = st.learn.learning.is_some_and(|l| l.replace == Some(i));
                 let label = if learning { "Move a control..." } else { "Relearn" };
                 if ui.selectable_label(learning, label).clicked() {
-                    st.learning = (!learning).then_some(LearnReq { target: b.target, replace: Some(i) });
-                    st.note = None;
+                    st.learn.learning = (!learning).then_some(LearnReq { target: b.target, replace: Some(i) });
+                    st.learn.note = None;
                 }
                 if icon_button(ui, Icon::Remove, true).on_hover_text("Remove binding").clicked() {
                     remove = Some(i);
@@ -164,7 +162,7 @@ fn bindings_table(ui: &mut egui::Ui, st: &mut MidiUi, cfg: &mut MidiPrefs, names
     });
     if let Some(i) = remove {
         cfg.bindings.remove(i);
-        st.learning = None;
+        st.learn.learning = None;
         *changed = true;
     }
 }
@@ -194,14 +192,14 @@ fn add_form(ui: &mut egui::Ui, st: &mut MidiUi, names: &HashMap<StripId, String>
             });
         }
         let target = st.kind.build(st.strip, st.scene);
-        let learning = st.learning.is_some_and(|l| l.replace.is_none());
+        let learning = st.learn.learning.is_some_and(|l| l.replace.is_none());
         let text = if learning { "Move a control... (click to cancel)" } else { "Learn" };
         if ui.selectable_label(learning, text).clicked() {
             if learning || target.validate().is_err() {
-                st.learning = None;
+                st.learn.learning = None;
             } else {
-                st.learning = Some(LearnReq { target, replace: None });
-                st.note = None;
+                st.learn.learning = Some(LearnReq { target, replace: None });
+                st.learn.note = None;
             }
         }
     });
