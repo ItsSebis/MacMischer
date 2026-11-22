@@ -261,6 +261,17 @@ mod tests {
     }
 
     #[test]
+    fn a_single_digit_commits_at_once_when_no_tenth_strip_exists() {
+        let now = Instant::now();
+        let mut e = NumberEntry::default();
+        e.set_positional(Some(9));
+        assert_eq!(e.char('1', now), Some(Some(Entry::Position(1))), "no 10th strip: no waiting");
+        e.set_positional(Some(10));
+        assert_eq!(e.char('1', now), Some(None), "a 10th strip exists: wait for a second digit");
+        assert_eq!(e.poll(now + TIMEOUT), Some(Entry::Position(1)));
+    }
+
+    #[test]
     fn foreign_chars_pass_through() {
         let mut e = NumberEntry::default();
         assert_eq!(e.char('m', Instant::now()), None);

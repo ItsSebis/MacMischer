@@ -142,7 +142,12 @@ impl App {
         }
         let now = Instant::now();
         let b = self.current_bank();
-        let positional = b.positional.then(|| b.strips.len().min(99) as u8);
+        // Positions count the strips as displayed: a linked pair is one strip.
+        let shown = match &self.conn {
+            Conn::Mixer(m) => m.state().display_strips(&b.strips).len(),
+            Conn::Finding(_) => b.strips.len(),
+        };
+        let positional = b.positional.then(|| shown.min(99) as u8);
         self.entry.set_positional(positional);
         let events = ctx.input(|i| i.events.clone());
         for ev in events {
