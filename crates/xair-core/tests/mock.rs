@@ -121,6 +121,14 @@ fn solo_follows_the_linked_partner() {
     let (a, b) = (StripId::Ch(1), StripId::Ch(2));
     mixer.set(Param::Solo(a.solo_index()), Value::Int(1));
     assert!(mixer.state().soloed(a) && !mixer.state().soloed(b), "unlinked: no mirror");
+    wait_for("mock has the solo", 2, || {
+        mock.get(&Param::Solo(a.solo_index()).path()) == Some(Value::Int(1))
+    });
+    assert_ne!(
+        mock.get(&Param::Solo(b.solo_index()).path()),
+        Some(Value::Int(1)),
+        "unlinked partner receives no solo write"
+    );
     mixer.set(Param::Solo(a.solo_index()), Value::Int(0));
     mixer.set(Param::ChLink(1), Value::Int(1));
     mixer.set(Param::Solo(a.solo_index()), Value::Int(1));
