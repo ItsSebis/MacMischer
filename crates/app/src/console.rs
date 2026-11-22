@@ -194,6 +194,7 @@ impl Console {
             Action::RecallScene(i) => {
                 self.recall_at = Some(env.now);
                 self.reset();
+                self.pending_load = None;
                 m.load_snapshot(i);
                 out.recalled = true;
                 out.flash = Some(format!("Recalled scene {i}"));
@@ -260,7 +261,11 @@ impl Console {
                 }
             }
             Action::PresetLoadConfirmed(name) => {
-                if let Some(msg) = self.load_preset(m, s, &name, true, false) {
+                // Only the prompt it answers: same strip and preset name, else ignore.
+                let matches = self.pending_load.as_ref().is_some_and(|p| p.strip == s && p.name == name);
+                if !matches {
+                    self.pending_load = None;
+                } else if let Some(msg) = self.load_preset(m, s, &name, true, false) {
                     say(out, msg);
                 }
             }
@@ -519,6 +524,67 @@ mod tests {
         r.run(vec![Action::Select(CH1), Action::PresetLoad("t".into()), Action::PresetLoadConfirmed("t".into())]);
         assert!(r.console.pending_load().is_none());
         assert!((r.hpf() - 0.9).abs() > 0.05, "confirmed load applied");
+    }
+
+    /// Rig with a saved preset "t" and the HPF moved away from it; Safe mode on.
+    fn safe_rig_with_changed_hpf() -> Rig {
+        let mut r = Rig::new();
+        r.run(vec![Action::PresetSave("t".into())]);
+        r.run(vec![Action::Set(Param::Proc(CH1, Proc::Hpf), Value::Float(0.9))]);
+        r.safe = true;
+        r
+    }
+
+    #[test]
+    fn confirming_without_a_pending_prompt_writes_nothing() {
+        let mut r = safe_rig_with_changed_hpf();
+        r.run(vec![Action::PresetLoadConfirmed("t".into())]);
+        assert!((r.hpf() - 0.9).abs() < 1e-6);
+        assert!(!r.console.preset_undo_available());
+    }
+
+    #[test]
+    fn confirming_a_different_preset_name_writes_nothing() {
+        let mut r = safe_rig_with_changed_hpf();
+        r.run(vec![Action::PresetLoad("t".into())]);
+        r.run(vec![Action::PresetLoadConfirmed("other".into())]);
+        assert!((r.hpf() - 0.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn confirming_after_the_selection_moved_writes_nothing_to_the_new_strip() {
+        let mut r = safe_rig_with_changed_hpf();
+        let ch2 = Param::Proc(StripId::Ch(2), Proc::Hpf);
+        let before = r.mixer.state().get(ch2).cloned();
+        r.run(vec![Action::PresetLoad("t".into())]);
+        r.run(vec![Action::Select(StripId::Ch(2)), Action::PresetLoadConfirmed("t".into())]);
+        assert_eq!(r.mixer.state().get(ch2).cloned(), before);
+        assert!((r.hpf() - 0.9).abs() < 1e-6);
+        assert!(!r.console.preset_undo_available());
+    }
+
+    #[test]
+    fn confirming_after_a_scene_recall_writes_nothing() {
+        let mut r = safe_rig_with_changed_hpf();
+        r.run(vec![Action::PresetLoad("t".into())]);
+        r.run(vec![Action::RecallScene(1)]);
+        assert!(r.console.pending_load().is_none());
+        let after_recall = r.hpf();
+        r.run(vec![Action::PresetLoadConfirmed("t".into())]);
+        assert_eq!(r.hpf(), after_recall);
+        assert!(!r.console.preset_undo_available());
+    }
+
+    #[test]
+    fn a_normal_confirm_loads_and_undo_preset_restores() {
+        let mut r = safe_rig_with_changed_hpf();
+        let original_after_save = r.hpf();
+        r.run(vec![Action::PresetLoad("t".into())]);
+        let out = r.run(vec![Action::PresetLoadConfirmed("t".into())]);
+        assert!(out.flash.unwrap().starts_with("Loaded \"t\""));
+        assert!((r.hpf() - 0.9).abs() > 0.05);
+        r.run(vec![Action::PresetUndo]);
+        assert!((r.hpf() - original_after_save).abs() < 1e-6);
     }
 
     #[test]
