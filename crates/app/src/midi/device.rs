@@ -1,6 +1,7 @@
 //! Real MIDI input via midir (the `midi` feature).
 
 use super::*;
+use std::time::{Duration, Instant};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 
