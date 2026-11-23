@@ -9,10 +9,9 @@ use xair_proto::{SendTo, StripId};
 use xair_remote::config::{sendto_to_str, PageConfig, RemoteConfig};
 use xair_remote::RemoteStatus;
 
-#[allow(clippy::too_many_arguments)]
-pub fn remote_window(
-    ctx: &egui::Context,
-    open: &mut bool,
+/// The "Remote" tab of the settings window: enable/port/PIN, status, URL + QR code, page editor.
+pub fn remote_panel(
+    ui: &mut egui::Ui,
     cfg: &mut RemoteConfig,
     status: RemoteStatus,
     clients: usize,
@@ -20,29 +19,14 @@ pub fn remote_window(
     current_bank: usize,
     names: &HashMap<StripId, String>,
 ) {
-    if !*open {
-        return;
-    }
-    let max_h = ctx.content_rect().height() * 0.85;
     let bank = banks.get(current_bank);
-    egui::Window::new("Web remote")
-        .open(open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .max_height(max_h)
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height(max_h - 50.0).min_scrolled_height(max_h - 50.0).auto_shrink([false, false]).show(ui, |ui| {
-                ui.set_width(620.0);
-                header(ui, cfg, &status, clients);
-                if let RemoteStatus::Running { port } = status {
-                    ui.separator();
-                    urls(ui, port);
-                }
-                ui.separator();
-                pages(ui, cfg, bank, names);
-            });
-        });
+    header(ui, cfg, &status, clients);
+    if let RemoteStatus::Running { port } = status {
+        ui.separator();
+        urls(ui, port);
+    }
+    ui.separator();
+    pages(ui, cfg, bank, names);
 }
 
 fn header(ui: &mut egui::Ui, cfg: &mut RemoteConfig, status: &RemoteStatus, clients: usize) {

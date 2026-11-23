@@ -299,6 +299,7 @@ impl Console {
             | Action::OpenRouting
             | Action::OpenFx
             | Action::OpenRemote
+            | Action::OpenSettings
             | Action::OpenMidi
             | Action::SetView(_) => {}
         }

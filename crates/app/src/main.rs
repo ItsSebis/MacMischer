@@ -24,6 +24,7 @@ mod scenes;
 mod remote_view;
 mod routing_view;
 mod session;
+mod settings_view;
 mod show;
 mod theme;
 mod updater;

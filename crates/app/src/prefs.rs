@@ -15,6 +15,8 @@ pub struct Prefs {
     pub recent_shows: Vec<PathBuf>,
     /// Safe mode: scene recall needs confirmation (Simple mode when false).
     pub safe_mode: bool,
+    /// Ignore the scroll wheel / trackpad scroll on faders, bars and EQ bands (no accidental moves).
+    pub disable_scroll: bool,
     /// MIDI input: enabled, device and bindings (not part of the show file).
     #[serde(deserialize_with = "crate::midi::lenient_prefs")]
     pub midi: crate::midi::MidiPrefs,
@@ -121,5 +123,16 @@ mod tests {
         let pr = Prefs::load_from(&p);
         assert!(pr.updates.check_at_launch);
         assert_eq!(pr.updates.skipped_version.as_deref(), Some("0.2.0"));
+    }
+
+    #[test]
+    fn scroll_is_enabled_by_default_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prefs.toml");
+        std::fs::write(&p, "safe_mode = true\n").unwrap();
+        assert!(!Prefs::load_from(&p).disable_scroll);
+        let pr = Prefs { disable_scroll: true, ..Default::default() };
+        pr.save_to(&p).unwrap();
+        assert!(Prefs::load_from(&p).disable_scroll);
     }
 }

@@ -266,7 +266,7 @@ fn graph(ui: &mut Ui, c: &mut Ctx, s: StripId, rect: Rect, bands: &[Band], eq_on
             }
         }
         if resp.hovered() {
-            let d = ui.input(|i| i.smooth_scroll_delta.y);
+            let d = crate::widgets::scroll_delta(ui).y;
             if d != 0.0 {
                 // Scroll up = narrower (higher Q).
                 let q = (b.q * (1.0 + d * 0.004)).clamp(0.3, 10.0);

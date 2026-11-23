@@ -32,6 +32,7 @@ pub enum Action {
     Undo,
     Redo,
     OpenRemote,
+    OpenSettings,
     OpenMidi,
     /// A/B compare: toggle the selected strip between its two processing snapshots.
     AbToggle,
@@ -86,6 +87,7 @@ impl Action {
             | Action::OpenRouting
             | Action::OpenFx
             | Action::OpenRemote
+            | Action::OpenSettings
             | Action::OpenMidi
             | Action::PresetRefresh
             | Action::SetView(_) => true,

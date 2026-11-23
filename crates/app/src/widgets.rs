@@ -71,6 +71,22 @@ pub fn paint_meter(ui: &Ui, rect: Rect, level_db: f32, peak_db: f32) {
     }
 }
 
+static SCROLL_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Safety setting: when on, scrolling never changes a value.
+pub fn set_scroll_disabled(off: bool) {
+    SCROLL_OFF.store(off, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Scroll input for value controls; zero while scrolling is disabled in Settings.
+pub fn scroll_delta(ui: &Ui) -> Vec2 {
+    if SCROLL_OFF.load(std::sync::atomic::Ordering::Relaxed) {
+        Vec2::ZERO
+    } else {
+        ui.input(|i| i.smooth_scroll_delta)
+    }
+}
+
 /// Vertical fader. Returns the new 0..1 position if the user changed it.
 /// Drag (Shift = fine), scroll wheel / two-finger, double-click = unity.
 pub fn fader(ui: &mut Ui, size: Vec2, value: f32, accent: Color32, id: egui::Id) -> Option<f32> {
@@ -107,7 +123,7 @@ pub fn fader(ui: &mut Ui, size: Vec2, value: f32, accent: Color32, id: egui::Id)
             new = Some((value + dv).clamp(0.0, 1.0));
         }
     } else if resp.hovered() {
-        let dy = ui.input(|i| i.smooth_scroll_delta.y);
+        let dy = scroll_delta(ui).y;
         if dy != 0.0 {
             new = Some((value + dy * 0.0015).clamp(0.0, 1.0));
         }
@@ -140,7 +156,7 @@ pub fn hbar(ui: &mut Ui, size: Vec2, value: f32, centered: bool, id: egui::Id) -
         let fine = if ui.input(|i| i.modifiers.shift) { 0.1 } else { 1.0 };
         Some(value + resp.drag_delta().x / rect.width() * fine)
     } else if resp.hovered() {
-        let d = ui.input(|i| i.smooth_scroll_delta);
+        let d = scroll_delta(ui);
         let d = if d.x != 0.0 { d.x } else { d.y };
         (d != 0.0).then_some(value + d * 0.0015)
     } else {

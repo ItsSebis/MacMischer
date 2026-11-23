@@ -39,7 +39,7 @@ pub struct App {
     editor: Option<BankEditor>,
     scenes: ScenesUi,
     remote: xair_remote::Remote,
-    show_remote: bool,
+    settings: crate::settings_view::SettingsUi,
     midi: crate::midi::MidiService,
     midi_input: MidiInput,
     midi_ui: crate::midi_view::MidiUi,
@@ -71,7 +71,7 @@ impl App {
             editor: None,
             scenes: ScenesUi::default(),
             remote: xair_remote::Remote::new(),
-            show_remote: false,
+            settings: Default::default(),
             midi: crate::midi::MidiService::new(ctx.clone()),
             midi_input: Default::default(),
             midi_ui: Default::default(),
@@ -94,7 +94,8 @@ impl App {
             Ok("dca") => app.console.select(StripId::Dca(1)),
             Ok("scenes") => app.scenes.open = true,
             Ok("routing") => app.show_routing = true,
-            Ok("remote") => app.show_remote = true,
+            Ok("remote") => app.settings.toggle(crate::settings_view::Tab::Remote),
+            Ok("settings") => app.settings.toggle(crate::settings_view::Tab::Safety),
             Ok("eq") => app.view = views::DetailView::Eq,
             Ok("dyn") => app.view = views::DetailView::Dynamics,
             _ => {}
@@ -211,7 +212,8 @@ impl App {
                 Action::OpenScenes => self.scenes.open = !self.scenes.open,
                 Action::OpenRouting => self.show_routing = !self.show_routing,
                 Action::OpenFx => self.show_fx = !self.show_fx,
-                Action::OpenRemote => self.show_remote = !self.show_remote,
+                Action::OpenRemote => self.settings.toggle(crate::settings_view::Tab::Remote),
+                Action::OpenSettings => self.settings.toggle(crate::settings_view::Tab::Safety),
                 Action::OpenMidi => self.midi_ui.open = !self.midi_ui.open,
                 Action::SetView(v) => self.view = v,
                 other => batch.push(other),
@@ -475,12 +477,9 @@ impl eframe::App for App {
                     if ui.button(lock_txt).on_hover_text("Ctrl/Cmd+L — only mutes and the main fader work while locked").clicked() {
                         c.actions.push(Action::ToggleLock);
                     }
-                    let safe = &mut self.session.prefs.safe_mode;
-                    let before = *safe;
-                    ui.selectable_value(safe, true, "Safe").on_hover_text("Scene recall needs a confirming second click");
-                    ui.selectable_value(safe, false, "Simple").on_hover_text("No confirmations");
-                    if *safe != before {
-                        prefs_changed = true;
+                    let mode = if self.session.prefs.safe_mode { "Safe" } else { "Simple" };
+                    if ui.button(format!("Settings · {mode}")).on_hover_text("Remote, safety and scroll wheel (Ctrl/Cmd+,)").clicked() {
+                        c.actions.push(Action::OpenSettings);
                     }
                     ui.separator();
                     let mut check = self.updater.prefs().check_at_launch;
@@ -594,9 +593,10 @@ impl eframe::App for App {
         crate::fx_view::fx_window(&ctx, &mut self.show_fx, st_for_windows, self.console.locked(), &mut actions);
         {
             let (status, clients) = (self.remote.status(), self.remote.clients());
-            crate::remote_view::remote_window(
+            prefs_changed |= crate::settings_view::settings_window(
                 &ctx,
-                &mut self.show_remote,
+                &mut self.settings,
+                &mut self.session.prefs,
                 &mut self.session.remote,
                 status,
                 clients,
@@ -605,6 +605,7 @@ impl eframe::App for App {
                 &names,
             );
         }
+        crate::widgets::set_scroll_disabled(self.session.prefs.disable_scroll);
         prefs_changed |= crate::midi_view::midi_window(
             &ctx,
             &mut self.midi_ui,
