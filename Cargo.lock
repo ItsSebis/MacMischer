@@ -1818,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "icon-gen"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "resvg",
 ]
@@ -2129,7 +2129,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "macmischer"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "directories",
  "eframe",
@@ -5156,7 +5156,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "xair-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "crossbeam-channel",
  "if-addrs",
@@ -5168,7 +5168,7 @@ dependencies = [
 
 [[package]]
 name = "xair-mock"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "rosc",
  "xair-proto",
@@ -5176,14 +5176,14 @@ dependencies = [
 
 [[package]]
 name = "xair-proto"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "rosc",
 ]
 
 [[package]]
 name = "xair-remote"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "axum",
  "futures-util",
