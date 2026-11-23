@@ -1,43 +1,44 @@
 # Releasing
 
-What a **Release** must look like for the self-updater to offer it as an **Update**, and how the DMG is built by hand today. There is no CI; releases are made manually. Why the updater trusts GitHub's digest: [ADR 0001](adr/0001-self-update-trusts-github-digest.md).
+What a **Release** must look like for the self-updater to offer it as an **Update**, and how Releases are built. Pushing a `v<ver>` tag builds all three platforms in GitHub Actions and publishes the Release ([`.github/workflows/release.yml`](../.github/workflows/release.yml)). Why the updater trusts GitHub's digest: [ADR 0001](adr/0001-self-update-trusts-github-digest.md). How each platform installs: [ADR 0002](adr/0002-per-platform-update-install.md).
 
 ## The contract
 
-The updater installs a Release only if rules 1-3 hold (checked before offering Update now) and rule 4 holds when installing:
+Every Release carries one asset per platform. The updater looks only for its own platform's asset and installs it only if rules 1-3 hold (checked before offering Update now); rule 4 holds when installing:
 
-1. The tag is exactly `v<ver>` (a single lowercase `v`, then `major.minor.patch`). The updater enforces this form, and builds the expected asset name from the tag's version. That `<ver>` also equals the app version in the workspace manifest (`[workspace.package] version` in the root `Cargo.toml`) is a release-checklist item, not enforced by the updater.
-2. Exactly one asset is *named* `MacMischer-<ver>-macos-arm64.dmg`. Other, differently named assets are tolerated; two assets with that name make the Release announce-only.
+1. The tag is exactly `v<ver>` (a single lowercase `v`, then `major.minor.patch`). The updater builds the expected asset name from the tag's version. That `<ver>` also equals the app version in the workspace manifest (`[workspace.package] version` in the root `Cargo.toml`) is enforced by the release workflow, not by the updater.
+2. Exactly one asset is *named* as below for the platform. Other, differently named assets are tolerated; two assets with that name make the Release announce-only.
+
+   | Platform | Asset | Contains |
+   |---|---|---|
+   | macOS (Apple Silicon) | `MacMischer-<ver>-macos-arm64.dmg` | top-level `MacMischer.app` |
+   | Windows (x64) | `MacMischer-<ver>-windows-x64-setup.exe` | Inno Setup installer (per-user, silent-capable) |
+   | Linux (x86_64) | `MacMischer-<ver>-linux-x86_64.AppImage` | an executable AppImage (ELF) |
 3. GitHub publishes a `sha256:<hex>` digest for that asset.
-4. The DMG contains a top-level `MacMischer.app`.
+4. The asset installs: a DMG without a top-level `MacMischer.app`, or an AppImage that is not an ELF file, fails the install and leaves the installed app untouched (the banner shows an error with Try again). The Windows setup runs detached after the app quits, so a failing setup is not reported in the app; the old version stays installed.
 
-A Release that breaks rule 1, 2 or 3 is **announce-only**: the updater tells the Operator it exists but never installs it. Rule 4 is only discovered at install time: a DMG without a top-level `MacMischer.app` fails the install, the installed app is rolled back untouched, and the banner shows an error with Try again. It is not announce-only.
+A Release that breaks rule 1, 2 or 3 for a platform is **announce-only** there: the updater tells the Operator it exists but never installs it. The updater also falls back to announce-only when the running app cannot be replaced in place: a macOS app outside a writable `.app`, a Linux binary that is not an AppImage (or in a read-only folder), a Windows exe that was not installed by the setup program (no `unins000.exe` beside it, e.g. `cargo run`).
 
-## Checklist
+## Making a Release
 
-1. Bump `version` under `[workspace.package]` in `Cargo.toml` (the app crate inherits it); commit it.
-2. Build the bundle (on an Apple Silicon Mac, since the asset is `arm64`):
+1. Bump `version` under `[workspace.package]` in `Cargo.toml`; commit and push it.
+2. Tag and push:
    ```sh
-   cargo install cargo-bundle    # once
-   cargo bundle --release -p macmischer
-   codesign --force --deep -s - target/release/bundle/osx/MacMischer.app
+   git tag "v0.1.4" && git push origin "v0.1.4"
    ```
-   This is what `tools/install-macos.sh` does, except that script also installs to `/Applications` and deletes `target/release/bundle`, so do not use it to produce the release bundle. The ad hoc signature matches the script; the app is not notarised.
-3. Create the DMG with `MacMischer.app` at its top level. `tools/install-macos.sh` does not do this step, and no script in the repo does; the manual command below was run once on macOS (it prints a deprecation warning from `hdiutil` but works, and the resulting DMG mounts with `MacMischer.app` at its top level):
-   ```sh
-   VER=0.1.1   # must equal the manifest version
-   STAGE=$(mktemp -d)
-   cp -R target/release/bundle/osx/MacMischer.app "$STAGE/"
-   hdiutil create -volname MacMischer -srcfolder "$STAGE" -ov -format UDZO \
-     "MacMischer-$VER-macos-arm64.dmg"
-   ```
-4. Tag and create the Release with that single asset:
-   ```sh
-   git tag "v$VER" && git push origin "v$VER"
-   gh release create "v$VER" "MacMischer-$VER-macos-arm64.dmg" --title "v$VER" --notes "..."
-   ```
-5. After upload, verify GitHub shows the digest (rule 3):
-   ```sh
-   gh release view "v$VER" --json assets --jq '.assets[] | {name, digest}'
-   ```
-   `digest` must be `sha256:<hex>`. If it is missing or the asset name is wrong, fix or re-upload before announcing; until then the Release is announce-only.
+3. The workflow runs the tests, builds the three assets in parallel, and only when all three exist creates the GitHub Release (with generated notes) and checks that GitHub published a digest for each asset. If it fails before publishing, nothing is released; fix and re-tag (delete the tag first).
+4. Edit the Release notes on GitHub if you want them nicer: the banner shows them.
+
+## Building an asset by hand
+
+Each asset has a script, which the workflow also uses. Run from the repo root; outputs land in `dist/` (git-ignored).
+
+- macOS (Apple Silicon): `cargo install cargo-bundle` once, then `tools/macos/build-dmg.sh` (bundles, ad hoc signs, makes the DMG). `tools/install-macos.sh` is for installing locally, not for releasing.
+- Windows: `cargo build --release -p macmischer`, then with [Inno Setup 6](https://jrsoftware.org/isinfo.php) installed, set `MM_VERSION` to the version and run `iscc tools\windows\macmischer.iss`.
+- Linux: `cargo build --release -p macmischer`, then `tools/linux/build-appimage.sh` (needs [`appimagetool`](https://github.com/AppImage/appimagetool) on `PATH` or in `APPIMAGETOOL`). The AppImage uses the host's graphics, ALSA and windowing libraries; it is built on Ubuntu 22.04 so it runs on that and newer.
+
+Upload by hand only if the workflow is unavailable: `gh release create "v$VER" dist/* --title "v$VER"`, then verify the digests:
+
+```sh
+gh release view "v$VER" --json assets --jq '.assets[] | {name, digest}'
+```

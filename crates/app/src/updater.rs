@@ -42,6 +42,47 @@ pub trait Installer: Send + Sync {
     fn volume_read_only(&self, path: &Path) -> bool;
 }
 
+/// Installs a downloaded, verified package on platforms without a bundle swap (Windows setup
+/// program, Linux AppImage). Does everything including starting the new version; the Updater then
+/// reports Relaunching and the app quits.
+pub trait PackageInstaller: Send + Sync {
+    fn install(&self, package: &Path) -> Result<(), String>;
+    /// Remove leftovers of a previous Update; best effort.
+    fn cleanup(&self) {}
+}
+
+/// The platforms we ship Releases for; each has exactly one asset per Release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Platform {
+    MacosArm64,
+    WindowsX64,
+    LinuxX64,
+}
+
+impl Platform {
+    /// The platform this binary was built for, if we ship Releases for it.
+    pub fn current() -> Option<Platform> {
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            Some(Platform::MacosArm64)
+        } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+            Some(Platform::WindowsX64)
+        } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            Some(Platform::LinuxX64)
+        } else {
+            None
+        }
+    }
+
+    /// The Release asset name for `version` (see `docs/RELEASING.md`).
+    pub fn asset_name(self, version: &str) -> String {
+        match self {
+            Platform::MacosArm64 => format!("MacMischer-{version}-macos-arm64.dmg"),
+            Platform::WindowsX64 => format!("MacMischer-{version}-windows-x64-setup.exe"),
+            Platform::LinuxX64 => format!("MacMischer-{version}-linux-x86_64.AppImage"),
+        }
+    }
+}
+
 /// A Release that meets the contract in `docs/RELEASING.md` and can be installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Update {
@@ -140,7 +181,10 @@ enum Install {
     Unwired,
     /// In-place install is impossible here: announcements offer Open release page only.
     Degraded,
+    /// macOS: mount the DMG and swap the `.app`.
     Possible { target: PathBuf, installer: Arc<dyn Installer> },
+    /// Windows / Linux: hand the verified package to the platform installer.
+    Package(Arc<dyn PackageInstaller>),
 }
 
 type SavePrefs = Arc<dyn Fn(&UpdatePrefs) + Send + Sync>;
@@ -164,6 +208,7 @@ pub struct Updater {
     prefs: UpdatePrefs,
     save_prefs: SavePrefs,
     install: Install,
+    platform: Platform,
 }
 
 impl Updater {
@@ -183,7 +228,24 @@ impl Updater {
             prefs: UpdatePrefs::default(),
             save_prefs: Arc::new(|_| {}),
             install: Install::Unwired,
+            platform: Platform::MacosArm64,
         }
+    }
+
+    /// Which platform's asset to look for (default macOS arm64).
+    pub fn with_platform(mut self, platform: Platform) -> Updater {
+        self.platform = platform;
+        self
+    }
+
+    /// Install by handing the package to `installer`; None when the running app cannot be
+    /// replaced in place (Releases are then announced with Open release page only).
+    pub fn with_package_install(mut self, installer: Option<Arc<dyn PackageInstaller>>) -> Updater {
+        self.install = match installer {
+            Some(i) => Install::Package(i),
+            None => Install::Degraded,
+        };
+        self
     }
 
     /// Install into `target`, the running app's bundle (None when not running from one). When
@@ -231,7 +293,7 @@ impl Updater {
         self
     }
 
-    /// The real thing: GitHub feed, system browser, macOS arm64 only.
+    /// The real thing: GitHub feed, system browser, the platform's own installer.
     pub fn production(repaint: impl Fn() + Send + Sync + 'static) -> Updater {
         let prefs = crate::prefs::Prefs::load().updates;
         let save: SavePrefs = Arc::new(|u: &UpdatePrefs| {
@@ -239,14 +301,22 @@ impl Updater {
             p.updates = u.clone();
             p.save();
         });
+        let platform = Platform::current();
         let mut u = Updater::new(
             env!("CARGO_PKG_VERSION"),
             Arc::new(GithubFeed),
             Arc::new(SystemBrowser),
-            cfg!(all(target_os = "macos", target_arch = "aarch64")),
-        );
+            platform.is_some(),
+        )
+        .with_platform(platform.unwrap_or(Platform::MacosArm64));
         u.on_change = Arc::new(repaint);
-        let u = u.with_prefs(prefs, save).with_install(running_bundle(), Arc::new(SystemInstaller));
+        let mut u = u.with_prefs(prefs, save);
+        u = match platform {
+            Some(Platform::MacosArm64) => u.with_install(running_bundle(), Arc::new(SystemInstaller)),
+            Some(Platform::WindowsX64) => u.with_package_install(crate::updater_pkg::windows_installer()),
+            Some(Platform::LinuxX64) => u.with_package_install(crate::updater_pkg::appimage_installer()),
+            None => u,
+        };
         u.cleanup_old_bundle();
         u
     }
@@ -260,10 +330,11 @@ impl Updater {
         let (feed, current, notify) = (self.feed.clone(), self.current.clone(), self.on_change.clone());
         let skipped = self.prefs.skipped_version.clone();
         let degraded = matches!(self.install, Install::Degraded);
+        let platform = self.platform;
         std::thread::spawn(move || {
             let found = feed
                 .latest()
-                .and_then(|json| announce(&current, &json))
+                .and_then(|json| announce(&current, &json, platform))
                 .map(|s| if degraded { announce_only(s) } else { s })
                 .filter(|s| !is_skipped(s, skipped.as_deref()));
             if let Some(found) = found {
@@ -329,8 +400,10 @@ impl Updater {
         let (tx, rx) = channel();
         let (dmgs, dir, notify) = (self.dmgs.clone(), self.downloads.clone(), self.on_change.clone());
         let job = update.clone();
+        let platform = self.platform;
         let install = match &self.install {
-            Install::Possible { target, installer } => Some((target.clone(), installer.clone())),
+            Install::Possible { target, installer } => Some(Step::Bundle(target.clone(), installer.clone())),
+            Install::Package(p) => Some(Step::Package(p.clone())),
             _ => None,
         };
         std::thread::spawn(move || {
@@ -338,12 +411,16 @@ impl Updater {
                 let _ = tx.send(s);
                 notify();
             };
-            match fetch_verified(&*dmgs, &dir, &job, &|| send(State::Verifying(job.clone()))) {
+            match fetch_verified(&*dmgs, &dir, &job, platform, &|| send(State::Verifying(job.clone()))) {
                 Ok(dmg) => match &install {
                     None => send(State::Ready { update: job.clone(), dmg }),
-                    Some((target, installer)) => {
+                    Some(step) => {
                         send(State::Installing(job.clone()));
-                        match install_bundle(&**installer, &dmg, target) {
+                        let done = match step {
+                            Step::Bundle(target, installer) => install_bundle(&**installer, &dmg, target),
+                            Step::Package(p) => p.install(&dmg),
+                        };
+                        match done {
                             Ok(()) => send(State::Relaunching(job.clone())),
                             Err(error) => send(State::Failed { update: job.clone(), error }),
                         }
@@ -358,16 +435,26 @@ impl Updater {
 
     /// Delete the `.old` bundle a previous Update left next to the installed app.
     pub fn cleanup_old_bundle(&self) {
-        if let Install::Possible { target, installer } = &self.install {
-            let old = sibling(target, ".old");
-            if old.exists() {
-                let _ = installer.remove(&old);
+        match &self.install {
+            Install::Possible { target, installer } => {
+                let old = sibling(target, ".old");
+                if old.exists() {
+                    let _ = installer.remove(&old);
+                }
             }
+            Install::Package(p) => p.cleanup(),
+            _ => {}
         }
     }
 }
 
-fn sibling(target: &Path, suffix: &str) -> PathBuf {
+/// What the download thread does with a verified file.
+enum Step {
+    Bundle(PathBuf, Arc<dyn Installer>),
+    Package(Arc<dyn PackageInstaller>),
+}
+
+pub(crate) fn sibling(target: &Path, suffix: &str) -> PathBuf {
     let mut name = target.file_name().unwrap_or_default().to_os_string();
     name.push(suffix);
     target.with_file_name(name)
@@ -437,12 +524,13 @@ fn fetch_verified(
     dmgs: &dyn DmgSource,
     dir: &std::path::Path,
     u: &Update,
+    platform: Platform,
     verifying: &dyn Fn(),
 ) -> Result<PathBuf, String> {
     let bytes = dmgs.download(&u.asset_url)?;
     verifying();
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot prepare download folder: {e}"))?;
-    let name = format!("MacMischer-{}-macos-arm64.dmg", u.version);
+    let name = platform.asset_name(&u.version);
     let (part, dmg) = (dir.join(format!("{name}.part")), dir.join(&name));
     std::fs::write(&part, &bytes).map_err(|e| format!("cannot save download: {e}"))?;
     let digest = Sha256::digest(std::fs::read(&part).map_err(|e| e.to_string())?);
@@ -455,7 +543,7 @@ fn fetch_verified(
 }
 
 /// The Available state for a feed body, if it holds a strictly newer, well-formed Release.
-fn announce(current: &str, json: &str) -> Option<State> {
+fn announce(current: &str, json: &str, platform: Platform) -> Option<State> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let tag = v["tag_name"].as_str()?;
     let version = tag.trim_start_matches('v').to_string();
@@ -465,16 +553,16 @@ fn announce(current: &str, json: &str) -> Option<State> {
     let notes = v["body"].as_str().unwrap_or_default().to_string();
     let url = v["html_url"].as_str()?.to_string();
     // Contract rule 1: the tag is exactly `v<ver>`; anything else is announce-only.
-    let asset = (tag == format!("v{version}")).then(|| contract_asset(&version, &v)).flatten();
+    let asset = (tag == format!("v{version}")).then(|| contract_asset(&version, &v, platform)).flatten();
     Some(match asset {
         Some((asset_url, sha256)) => State::Updatable(Update { version, notes, url, asset_url, sha256 }),
         None => State::Available { version, notes, url },
     })
 }
 
-/// The single DMG asset (download URL, lowercase hex digest) if the Release meets the contract.
-fn contract_asset(version: &str, release: &serde_json::Value) -> Option<(String, String)> {
-    let want = format!("MacMischer-{version}-macos-arm64.dmg");
+/// The single asset for `platform` (download URL, lowercase hex digest) if the Release meets the contract.
+fn contract_asset(version: &str, release: &serde_json::Value, platform: Platform) -> Option<(String, String)> {
+    let want = platform.asset_name(version);
     let mut matching = release["assets"].as_array()?.iter().filter(|a| a["name"].as_str() == Some(want.as_str()));
     let asset = matching.next()?;
     if matching.next().is_some() {
@@ -619,8 +707,10 @@ impl Browser for SystemBrowser {
     fn open(&self, url: &str) {
         #[cfg(target_os = "macos")]
         let _ = std::process::Command::new("open").arg(url).spawn();
-        #[cfg(not(target_os = "macos"))]
-        let _ = url;
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     }
 }
 
@@ -1303,5 +1393,91 @@ mod tests {
         if !writable_anyway {
             assert_announce_only(&mut r);
         }
+    }
+
+    // ---- Windows / Linux ----
+
+    fn platform_release(platform: Platform) -> String {
+        release_with(
+            "v0.2.0",
+            &[good_asset(), asset(&platform.asset_name("0.2.0"), Some(&format!("sha256:{DMG_SHA}")))],
+        )
+    }
+
+    #[test]
+    fn each_platform_picks_only_its_own_asset() {
+        for p in [Platform::MacosArm64, Platform::WindowsX64, Platform::LinuxX64] {
+            let json = release_with("v0.2.0", &[asset(&p.asset_name("0.2.0"), Some(&format!("sha256:{DMG_SHA}")))]);
+            for q in [Platform::MacosArm64, Platform::WindowsX64, Platform::LinuxX64] {
+                let state = announce("0.1.1", &json, q).unwrap();
+                assert_eq!(matches!(state, State::Updatable(_)), p == q, "asset for {p:?} seen from {q:?}");
+            }
+        }
+        assert_eq!(Platform::WindowsX64.asset_name("1.2.3"), "MacMischer-1.2.3-windows-x64-setup.exe");
+        assert_eq!(Platform::LinuxX64.asset_name("1.2.3"), "MacMischer-1.2.3-linux-x86_64.AppImage");
+    }
+
+    struct AnyUrlDmgs(Vec<u8>);
+    impl DmgSource for AnyUrlDmgs {
+        fn download(&self, _: &str) -> Result<Vec<u8>, String> {
+            Ok(self.0.clone())
+        }
+    }
+
+    struct FakePackage(Mutex<Vec<PathBuf>>, Result<(), String>);
+    impl PackageInstaller for FakePackage {
+        fn install(&self, package: &Path) -> Result<(), String> {
+            self.0.lock().unwrap().push(package.to_path_buf());
+            self.1.clone()
+        }
+    }
+
+    fn package_updater(platform: Platform, pkg: Arc<FakePackage>, dir: &Path) -> Updater {
+        Updater::new("0.1.1", Arc::new(FakeFeed(Some(platform_release(platform)))), Arc::new(FakeBrowser::default()), true)
+            .with_platform(platform)
+            .with_package_install(Some(pkg))
+            .with_downloads(Arc::new(AnyUrlDmgs(DMG.to_vec())), dir.to_path_buf())
+    }
+
+    #[test]
+    fn package_update_downloads_verifies_installs_and_asks_the_app_to_quit() {
+        for p in [Platform::WindowsX64, Platform::LinuxX64] {
+            let dir = tempfile::tempdir().unwrap();
+            let pkg = Arc::new(FakePackage(Mutex::new(vec![]), Ok(())));
+            let mut u = package_updater(p, pkg.clone(), dir.path());
+            u.check_at_launch();
+            u.wait_for_background_work();
+            u.update_now();
+            u.wait_for_background_work();
+            assert!(matches!(u.state(), State::Relaunching(_)), "{p:?}: {:?}", u.state());
+            assert_eq!(*pkg.0.lock().unwrap(), vec![dir.path().join(p.asset_name("0.2.0"))]);
+        }
+    }
+
+    #[test]
+    fn package_install_failure_is_reported_with_try_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = Arc::new(FakePackage(Mutex::new(vec![]), Err("nope".into())));
+        let mut u = package_updater(Platform::LinuxX64, pkg, dir.path());
+        u.check_at_launch();
+        u.wait_for_background_work();
+        u.update_now();
+        u.wait_for_background_work();
+        assert!(matches!(u.state(), State::Failed { error, .. } if error == "nope"));
+    }
+
+    #[test]
+    fn package_update_is_announce_only_when_it_cannot_be_installed_in_place() {
+        let mut u = Updater::new(
+            "0.1.1",
+            Arc::new(FakeFeed(Some(platform_release(Platform::LinuxX64)))),
+            Arc::new(FakeBrowser::default()),
+            true,
+        )
+        .with_platform(Platform::LinuxX64)
+        .with_package_install(None);
+        u.check_at_launch();
+        u.wait_for_background_work();
+        assert!(matches!(u.state(), State::Available { .. }));
     }
 }

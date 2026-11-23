@@ -1,12 +1,15 @@
 //! MacMischer — keyboard-first controller for Behringer XR18.
 //!
 //! `macmischer [--ip <addr>] [--mock]` — without options the mixer is discovered by broadcast.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 
 mod ab;
 mod presets;
 mod actions;
 mod app;
 mod bank_editor;
+mod background;
 mod banks;
 mod connect;
 mod console;
@@ -30,6 +33,7 @@ mod settings_view;
 mod show;
 mod theme;
 mod updater;
+mod updater_pkg;
 mod views;
 mod widgets;
 

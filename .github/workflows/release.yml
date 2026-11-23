@@ -1,0 +1,99 @@
+# Publishes a Release when a `v<ver>` tag is pushed: builds the app on all three platforms, then
+# creates the GitHub Release with the three assets at once (so the in-app updater never sees a
+# half-built Release). Asset names and rules: docs/RELEASING.md.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14 # Apple Silicon
+            name: macos
+          - os: windows-latest
+            name: windows
+          - os: ubuntu-22.04
+            name: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tag matches the app version
+        shell: bash
+        run: |
+          VER=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="macmischer") | .version')
+          if [ "v$VER" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match the app version v$VER (bump Cargo.toml first)"; exit 1
+          fi
+          echo "VER=$VER" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: cargo test --workspace --release
+
+      # ---- macOS: DMG with MacMischer.app at its top level ----
+      - name: Build DMG
+        if: matrix.name == 'macos'
+        run: |
+          cargo install cargo-bundle --locked
+          tools/macos/build-dmg.sh
+
+      # ---- Windows: Inno Setup installer ----
+      - name: Build installer
+        if: matrix.name == 'windows'
+        shell: bash
+        run: |
+          cargo build --release -p macmischer
+          choco install innosetup -y --no-progress
+          MM_VERSION="$VER" "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" tools/windows/macmischer.iss
+
+      # ---- Linux: AppImage ----
+      - name: Build AppImage
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+          cargo build --release -p macmischer
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          APPIMAGETOOL="$PWD/appimagetool" tools/linux/build-appimage.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          test "$(ls dist | wc -l)" -eq 3
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --generate-notes
+      - name: Check GitHub published a digest for every asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | "\(.name) \(.digest)"' | tee digests
+          test "$(grep -c ' sha256:' digests)" -eq 3

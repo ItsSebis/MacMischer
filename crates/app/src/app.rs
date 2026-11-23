@@ -56,6 +56,7 @@ pub struct App {
     flash: Option<(String, Instant)>,
     /// Release check; independent of the Console and the mixer connection.
     updater: crate::updater::Updater,
+    background: crate::background::Background,
 }
 
 impl App {
@@ -87,6 +88,7 @@ impl App {
             rta_trace: Default::default(),
             upper_h: None,
             flash: None,
+            background: Default::default(),
             updater: {
                 let c = ctx.clone();
                 let mut u = crate::updater::Updater::production(move || c.request_repaint());
@@ -380,6 +382,15 @@ impl App {
     }
 
     /// Non-blocking banner announcing a newer Release; Update now downloads, verifies and installs it.
+    /// Dropping an image file on the window sets it as the background.
+    fn take_dropped_image(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).next());
+        if let Some(p) = dropped.filter(|p| crate::background::is_image(p)) {
+            self.session.prefs.background.path = Some(p);
+            self.session.prefs.save();
+        }
+    }
+
     fn update_banner(&mut self, ui: &mut egui::Ui) {
         use crate::updater::{BannerView, State};
         let state = self.updater.state().clone();
@@ -435,6 +446,9 @@ impl eframe::App for App {
             self.midi.configure(m.enabled, m.device.as_deref(), self.midi_ui.open);
         }
         let midi_msgs = self.midi.drain();
+        self.take_dropped_image(ui.ctx());
+        self.background.sync(ui.ctx(), &self.session.prefs.background);
+        self.background.paint(ui);
         self.update_banner(ui);
         if let Conn::Finding(f) = &mut self.conn {
             if let Some(addr) = f.ui(ui) {
@@ -700,6 +714,7 @@ impl eframe::App for App {
                 self.session.banks.list(),
                 self.session.banks.index(),
                 &names,
+                self.background.error.as_deref(),
             );
             if check != self.updater.prefs().check_at_launch {
                 self.updater.set_check_at_launch(check);
@@ -738,6 +753,7 @@ impl eframe::App for App {
             self.session.prefs.save();
         }
         self.session.autosave(&ctx);
+        self.background.outline_text(&ctx);
         // Keep meters animating smoothly between network packets.
         ctx.request_repaint_after(Duration::from_millis(33));
     }

@@ -57,7 +57,7 @@ _Avoid_: toggle compare
 ## Releases
 
 **Release**:
-A published, versioned build of MacMischer on GitHub.
+A published, versioned build of MacMischer on GitHub, with one asset per platform (macOS, Windows, Linux).
 _Avoid_: version (for the published artifact), build
 
 **Update**:

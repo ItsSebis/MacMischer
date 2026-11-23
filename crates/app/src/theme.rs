@@ -23,6 +23,18 @@ pub const PHANTOM: Color32 = Color32::from_rgb(0xff, 0x8a, 0x3d);
 pub const OK: Color32 = Color32::from_rgb(0x3d, 0xd6, 0x6b);
 pub const WARN: Color32 = Color32::from_rgb(0xf2, 0xc9, 0x4c);
 
+/// How opaque the grey over the background image is (1.0 = solid, no image).
+static OVERLAY_ALPHA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000); // 1.0f32
+
+pub fn set_overlay_alpha(a: f32) {
+    OVERLAY_ALPHA.store(a.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `c` as the grey layered over the background image.
+pub fn overlay(c: Color32) -> Color32 {
+    c.linear_multiply(f32::from_bits(OVERLAY_ALPHA.load(std::sync::atomic::Ordering::Relaxed)))
+}
+
 /// X Air scribble-strip colour (palette lives in xair-proto, shared with the web remote).
 pub fn strip_color(code: i32) -> Color32 {
     let [r, g, b] = xair_proto::strip::scribble_rgb(code);

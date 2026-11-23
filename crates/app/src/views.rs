@@ -265,7 +265,7 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
     let width = if two_meters { STRIP_W_STEREO } else { STRIP_W };
     let (frame_rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let bg = if sel { theme::STRIP_SEL } else { theme::STRIP };
-    ui.painter().rect_filled(frame_rect, 4.0, bg);
+    ui.painter().rect_filled(frame_rect, 4.0, theme::overlay(bg));
     if sel {
         ui.painter().rect_stroke(frame_rect, 4.0, Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
     }

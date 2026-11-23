@@ -20,6 +20,10 @@ Linux desktop integration (icon in launcher/title bar under Wayland):
 `install -Dm644 assets/icon/icon-256.png ~/.local/share/icons/hicolor/256x256/apps/macmischer.png`
 and `install -Dm644 assets/macmischer.desktop ~/.local/share/applications/macmischer.desktop`.
 
+## Releases and updates
+
+Pushing a `v<ver>` tag builds and publishes a DMG (macOS), an installer (Windows) and an AppImage (Linux). The app checks GitHub at launch and, after you confirm, installs the new version for your platform in place. Details: [docs/RELEASING.md](docs/RELEASING.md).
+
 The icon source is `assets/icon/icon.svg`; regenerate PNGs with `cargo run -p icon-gen`.
 
 ## Keyboard

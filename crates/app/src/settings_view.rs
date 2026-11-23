@@ -14,6 +14,7 @@ pub enum Tab {
     #[default]
     Remote,
     Safety,
+    Appearance,
     Updates,
 }
 
@@ -44,6 +45,7 @@ pub fn settings_window(
     banks: &[Bank],
     current_bank: usize,
     names: &HashMap<StripId, String>,
+    bg_error: Option<&str>,
 ) -> bool {
     if !ui_state.open {
         return false;
@@ -61,6 +63,7 @@ pub fn settings_window(
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut ui_state.tab, Tab::Remote, "Remote");
                 ui.selectable_value(&mut ui_state.tab, Tab::Safety, "Safety");
+                ui.selectable_value(&mut ui_state.tab, Tab::Appearance, "Appearance");
                 ui.selectable_value(&mut ui_state.tab, Tab::Updates, "Updates");
             });
             ui.separator();
@@ -71,6 +74,7 @@ pub fn settings_window(
                         crate::remote_view::remote_panel(ui, remote_cfg, remote_status, clients, banks, current_bank, names)
                     }
                     Tab::Safety => changed |= safety(ui, prefs),
+                    Tab::Appearance => changed |= appearance(ui, prefs, bg_error),
                     Tab::Updates => {
                         changed |= ui.checkbox(check_at_launch, "Check for updates at launch").changed();
                         ui.label(
@@ -81,6 +85,39 @@ pub fn settings_window(
             });
         });
     ui_state.open = open;
+    changed
+}
+
+fn appearance(ui: &mut egui::Ui, prefs: &mut Prefs, error: Option<&str>) -> bool {
+    let mut changed = false;
+    let bg = &mut prefs.background;
+    ui.label(egui::RichText::new("Background image").strong());
+    let mut text = bg.path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+    ui.horizontal(|ui| {
+        let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text("Path to a PNG or JPEG (or drop a file on the window)").desired_width(440.0));
+        if r.lost_focus() {
+            let t = text.trim();
+            let new = (!t.is_empty()).then(|| std::path::PathBuf::from(t));
+            if new != bg.path {
+                bg.path = new;
+                changed = true;
+            }
+        }
+        if ui.add_enabled(bg.path.is_some(), egui::Button::new("Clear")).clicked() {
+            bg.path = None;
+            changed = true;
+        }
+    });
+    if let Some(e) = error {
+        ui.label(egui::RichText::new(e).size(11.0).color(theme::WARN));
+    }
+    ui.add_space(6.0);
+    changed |= ui.add(egui::Slider::new(&mut bg.opacity, 0.0..=1.0).text("Image opacity")).changed();
+    ui.label(
+        egui::RichText::new("The grey panels are layered on top; 0 is plain grey, 1 shows the image undimmed.")
+            .size(11.0)
+            .color(theme::DIM),
+    );
     changed
 }
 

@@ -22,6 +22,8 @@ pub struct Prefs {
     /// MIDI input: enabled, device and bindings (not part of the show file).
     #[serde(deserialize_with = "crate::midi::lenient_prefs")]
     pub midi: crate::midi::MidiPrefs,
+    /// Optional background image under the grey panels.
+    pub background: crate::background::BackgroundPrefs,
     /// Launch update check and the skipped Release.
     pub updates: crate::updater::UpdatePrefs,
 }
