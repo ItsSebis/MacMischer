@@ -30,7 +30,7 @@ meters = true         # show meters (default true)
 ```
 
 A linked pair is shown as one strip (id = the odd member, `"stereo": true`); fader and mute move both,
-and it has two meters (`meters` carries both sides: the odd id is L, the `partner` id is R). Double-tapping a fader resets it to 0 dB, or to `max_db` if that is lower;
+and it has two meters (`meters` carries both sides: `3` is L, `3:R` is R). Strips that are stereo by nature (Aux In, FX returns, Main) are `"stereo": true` too and also get two meters. Double-tapping a fader resets it to 0 dB, or to `max_db` if that is lower;
 mute is left as it is.
 
 ## HTTP
@@ -56,7 +56,7 @@ mute is left as it is.
 {"t":"auth","ok":false}                                // wrong PIN (connection stays open for retry)
 {"t":"pages","pages":[{"name":"Drums monitor"},{"name":"TV"}]}   // after auth (or immediately without PIN)
 {"t":"page","index":0,"name":"Drums monitor","bus":"Bus 2","max":0.85,
- "strips":[{"id":"1","name":"Kick","color":"#e84a4a","stereo":false,"partner":null}, …]}
+ "strips":[{"id":"1","name":"Kick","color":"#e84a4a","stereo":false}, …]}
 {"t":"state","connected":true,
  "strips":{"1":{"value":0.75,"db":"0.0","muted":false}, …}}     // full state of the open page; sent on open and on every change
 {"t":"meters","m":{"1":-23.5,"3":-40.1}}                         // dBFS, ~15 Hz, only if page.meters

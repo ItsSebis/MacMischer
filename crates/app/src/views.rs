@@ -9,7 +9,8 @@ use xair_core::{Meters, MixerState};
 use xair_proto::{fader, Param, Proc, SendTo, StripId, Value};
 
 pub const STRIP_W: f32 = 86.0;
-pub const STRIP_W_STEREO: f32 = 118.0;
+/// A linked pair only adds its second meter (10 + 1 px gap) to a normal strip.
+pub const STRIP_W_STEREO: f32 = STRIP_W + 11.0;
 
 /// Everything a view needs for one frame (read-only) plus the action sink.
 pub struct Ctx<'a> {
@@ -272,8 +273,8 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
         Some(p) => {
             let (a, b) = (c.st.name(s), c.st.name(p));
             let both = format!("{a} · {b}");
-            let label = if both.chars().count() <= 15 { both } else { a };
-            name_tag_with(ui, c, s, w, label, 15);
+            let label = if both.chars().count() <= 12 { both } else { a };
+            name_tag_with(ui, c, s, w, label, 12);
         }
         None => name_tag(ui, c, s, w),
     }

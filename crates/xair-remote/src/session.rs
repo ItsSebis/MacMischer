@@ -197,12 +197,13 @@ impl Session {
         let strips: Vec<Json> = shown
             .iter()
             .map(|s| {
-                let (name, color, partner) = match &st {
-                    Some(st) => (st.name(*s), st.color(*s), st.linked_partner(*s)),
-                    None => (s.to_string(), 0, None),
+                let (name, color, linked) = match &st {
+                    Some(st) => (st.name(*s), st.color(*s), st.linked_partner(*s).is_some()),
+                    None => (s.to_string(), 0, false),
                 };
-                json!({"id": s.short(), "name": name, "color": color_hex(color), "stereo": partner.is_some(),
-                       "partner": partner.map(|p| p.short())})
+                // Stereo = a linked pair or an inherently stereo strip (aux in, FX return, main).
+                let stereo = linked || is_stereo_strip(*s);
+                json!({"id": s.short(), "name": name, "color": color_hex(color), "stereo": stereo})
             })
             .collect();
         let bus = page.bus.map(|t| match &st {
@@ -258,12 +259,23 @@ impl Session {
                 if page.meters {
                     let mt = m.meters();
                     let st = m.state();
-                    // A linked pair reports both sides (L under the leader's id, R under its partner's).
+                    // Stereo strips report both sides: L under the strip's id, R under "<id>:R".
                     let mut vals: BTreeMap<String, f32> = BTreeMap::new();
+                    let r1 = |db: f32| (db * 10.0).round() / 10.0;
                     for s in st.display_strips(&page.strips) {
-                        for x in [Some(s), st.linked_partner(s)].into_iter().flatten() {
-                            if let Some(db) = mt.strip(x) {
-                                vals.insert(x.short(), (db * 10.0).round() / 10.0);
+                        let sides = match st.linked_partner(s) {
+                            Some(p) => mt.strip(s).zip(mt.strip(p)),
+                            None => mt.stereo(s),
+                        };
+                        match sides {
+                            Some((l, r)) => {
+                                vals.insert(s.short(), r1(l));
+                                vals.insert(format!("{}:R", s.short()), r1(r));
+                            }
+                            None => {
+                                if let Some(db) = mt.strip(s) {
+                                    vals.insert(s.short(), r1(db));
+                                }
                             }
                         }
                     }
@@ -272,6 +284,11 @@ impl Session {
             }
         }
     }
+}
+
+/// Strips that are stereo without being linked.
+fn is_stereo_strip(s: StripId) -> bool {
+    matches!(s, StripId::AuxIn | StripId::FxRtn(_) | StripId::Main)
 }
 
 /// Fader, or the send to the page's bus for input strips.
@@ -429,7 +446,6 @@ mod tests {
         let ids: Vec<&str> = msg["strips"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["3", "1"]);
         assert_eq!(msg["strips"][0]["stereo"], true);
-        assert_eq!(msg["strips"][0]["partner"], "4");
         let mut out = Vec::new();
         r.s.handle(level("3", 0.6), &mut out);
         r.s.handle(In::Mute { strip: "3".into(), muted: true }, &mut out);
