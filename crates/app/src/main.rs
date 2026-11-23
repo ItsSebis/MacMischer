@@ -23,6 +23,8 @@ mod prefs;
 mod scenes;
 mod remote_view;
 mod routing_view;
+mod rta;
+mod rta_view;
 mod session;
 mod settings_view;
 mod show;

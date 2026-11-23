@@ -34,6 +34,10 @@ _Avoid_: channel (only an input strip is a channel)
 Two adjacent Strips (1-2, 3-4, …) that the mixer treats as stereo, so fader, mute and send writes apply to both. Shown as one wide Strip under its odd (left) member.
 _Avoid_: stereo channel
 
+**RTA**:
+Real-time analyzer: a live spectrum of one selectable source on the mixer (default: main LR). _Auto gain_ makes the visible dB window follow the signal level.
+_Avoid_: spectrum meter
+
 **Bank**:
 An operator-defined, named list of Strips shown together; a bus-bound bank makes the level controls act on sends to that bus.
 _Avoid_: page, layer

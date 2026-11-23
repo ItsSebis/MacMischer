@@ -85,6 +85,7 @@ fn default_for(p: Param) -> Value {
         Param::Proc(s, p) => proc_default(s, p),
         Param::FxType(n) => Value::Int(n as i32 - 1),
         Param::FxPar(..) => Value::Float(0.5),
+        Param::RtaSource => Value::Int(meters::RTA_SOURCE_MAX), // the console defaults to MON
         Param::SnapIndex => Value::Int(1),
         Param::SnapName(1) => Value::Str("Home".into()),
         Param::SnapName(_) => Value::Str(String::new()),
@@ -140,13 +141,14 @@ fn is_on(st: &State, p: Param) -> bool {
 }
 
 /// Plausible moving spectrum (pink-ish slope with a few drifting peaks), 100 bands.
-fn rta_values(t: f32) -> Vec<f32> {
+fn rta_values(t: f32, source: i32) -> Vec<f32> {
+    let shift = 0.04 * (source % 8) as f32; // each source looks a bit different
     (0..meters::RTA_BANDS)
         .map(|i| {
             let x = i as f32 / (meters::RTA_BANDS - 1) as f32;
             let slope = -30.0 - 40.0 * x;
             let peak = |c: f32, w: f32| 18.0 * (-((x - c) / w).powi(2)).exp();
-            let c1 = 0.3 + 0.15 * (t * 0.7).sin();
+            let c1 = 0.3 + shift + 0.15 * (t * 0.7).sin();
             let c2 = 0.65 + 0.1 * (t * 1.1).cos();
             let jitter = 3.0 * (t * 6.0 + i as f32 * 1.7).sin();
             (slope + peak(c1, 0.06) + peak(c2, 0.05) + jitter).clamp(meters::FLOOR_DB, 0.0)
@@ -156,7 +158,8 @@ fn rta_values(t: f32) -> Vec<f32> {
 
 fn meter_values(st: &State, bank: u8, t: f32) -> Vec<f32> {
     if bank == 4 {
-        return rta_values(t);
+        let source = st.values.get(&Param::RtaSource.path()).and_then(Value::as_i32).unwrap_or(meters::RTA_SOURCE_MAX);
+        return rta_values(t, source);
     }
     let n = if bank == 1 { meters::m1::LEN } else { 36 };
     let mut out = vec![meters::FLOOR_DB; n];

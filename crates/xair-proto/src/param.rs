@@ -105,6 +105,8 @@ pub enum Param {
     Phantom(u8),
     /// int 0/1 — solo switch by mixer solo index (see PROTOCOL.md; mapping TBD)
     Solo(u8),
+    /// int RTA analysis source, see `meters::rta_source_label` (0..=32; hardware-verified on an XR18)
+    RtaSource,
     /// int current snapshot index
     SnapIndex,
     /// string snapshot name 1..64
@@ -152,6 +154,7 @@ impl Param {
             Param::Gain(h) => format!("/headamp/{h:02}/gain"),
             Param::Phantom(h) => format!("/headamp/{h:02}/phantom"),
             Param::Solo(i) => format!("/-stat/solosw/{i:02}"),
+            Param::RtaSource => "/-stat/rta/source".into(),
             Param::SnapIndex => "/-snap/index".into(),
             Param::SnapName(i) => format!("/-snap/{i:02}/name"),
             Param::InSrc(s) => format!("{}/config/insrc", s.prefix()),
@@ -206,6 +209,7 @@ impl Param {
             ["", "headamp", n, "gain"] => Some(Param::Gain(n.parse().ok()?)),
             ["", "headamp", n, "phantom"] => Some(Param::Phantom(n.parse().ok()?)),
             ["", "-stat", "solosw", n] => Some(Param::Solo(n.parse().ok()?)),
+            ["", "-stat", "rta", "source"] => Some(Param::RtaSource),
             ["", "-snap", "index"] => Some(Param::SnapIndex),
             ["", "config", "mute", n] => Some(Param::MuteGroupOn(n.parse().ok()?)),
             ["", "config", "solo", "level"] => Some(Param::MonitorLevel),
@@ -328,6 +332,7 @@ impl Param {
             v.push(Param::FxType(n));
             v.extend((1..=FX_PARAMS).map(|i| Param::FxPar(n, i)));
         }
+        v.push(Param::RtaSource);
         v.push(Param::SnapIndex);
         for i in 1..=64 {
             v.push(Param::SnapName(i));

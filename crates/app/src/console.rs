@@ -300,6 +300,7 @@ impl Console {
             | Action::OpenFx
             | Action::OpenRemote
             | Action::OpenSettings
+            | Action::OpenRta
             | Action::OpenMidi
             | Action::SetView(_) => {}
         }

@@ -91,14 +91,14 @@ Typed per-address reads/writes (single value each):
 | `/meters/5` | 44 | dynamics/other, **TBD** |
 | `/meters/6` | 39 | first 4 = -60, rest 0; **TBD** |
 
-### RTA (TBD, unverified; implemented in M8.4)
+### RTA (verified on an XR18, fw 1.19, 2026-11-23)
 
-- Subscribed with the same request as the other banks (`/meters ,s "/meters/4"`), renewed with them, and only while the app's RTA overlay is shown. No unsubscribe is sent when it is switched off: renewals stop and the mixer stops streaming when the subscription lapses (~10 s); the client discards the data meanwhile.
-- Observed: only that `/meters/4` carries a header value of 100 and 100 values, all -128 while the RTA is inactive (earlier probe). Not observed: any real spectrum data, so whether the layout is 100 i16 as assumed or the X Air docs' 50 packed i32 (two 16-bit values each) is unknown; the header value 100 suggests 100 shorts.
-- `xair_proto::meters::parse_rta` assumes: i32 count header, then >= 100 i16 LE values in 1/256 dB; first 100 used, rest ignored, count header not trusted, shorter blobs rejected. Values clamped to -128..0 dB.
-- Band centres are ASSUMED log-spaced 20 Hz..20 kHz over 100 bands (`rta_band_hz`); the real band layout (and whether the X Air docs' blob carries extra trailing values) is unchecked. Verify with a sine sweep on hardware.
-- The analysed source is chosen on the mixer (`/-prefs/rta/source`, int, per X Air docs; also unverified). The app does NOT read or set it (no `Param`); change it on the mixer or via xair-probe.
-- UI mapping: -100..0 dB across the EQ graph height, frequency via the EQ graph's x-axis.
+- Subscribed with the same request as the other banks (`/meters ,s "/meters/4"`), renewed with them, and only while the app needs it (RTA window open, or the EQ overlay toggled on). No unsubscribe is sent when it is switched off: renewals stop and the mixer stops streaming when the subscription lapses (~10 s); the client discards the data meanwhile.
+- **Blob:** 204 bytes = i32 count (100) + 100 × i16 LE in 1/256 dB, about 20 packets/s. -128 dB while the analysed source is silent (the default source is MON, which is silent unless the monitor output carries signal). `xair_proto::meters::parse_rta` reads this layout.
+- **Source:** `/-stat/rta/source` (int, **not** `/-prefs/rta/…`): 0..=15 Ch01..Ch16, 16 Aux, 17..=20 Fx1..Fx4, 21..=26 Bus1..Bus6, 27..=30 Send1..Send4, 31 LR (main), 32 MON (default; values above 32 read back as MON). Labels via `meters::rta_source_label`. `Param::RtaSource`. The console analyses ONE source at a time and the setting is global, so changing it in the app changes it on the console.
+- `/-stat/rta` as a node reads `<source> <PRE|POST>`; the second value (tap point, 0 = PRE) is not used by the app. `/-prefs/rta` holds only `det` (int, 0 = PEAK) and `decay` (float 0..1, shown as "1.00" at 0.333); neither is used by the app. There is no `/-prefs/rta/source`, `gain` or `autogain`.
+- Band centres are still ASSUMED log-spaced 20 Hz..20 kHz over 100 bands (`rta_band_hz`); 100 bands over 10 octaves is consistent with the blob, but no sine sweep has been run to check the frequency mapping.
+- App display: smoothing, peak hold and auto gain in `crates/app/src/rta.rs` (the visible window is 60 dB tall and follows the loudest band). The RTA window defaults the source to LR the first time it is opened in a session.
 
 ## Fader law (float 0..1 to dB)
 

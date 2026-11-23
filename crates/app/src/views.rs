@@ -8,6 +8,10 @@ use std::collections::HashMap;
 use xair_core::{Meters, MixerState};
 use xair_proto::{fader, Param, Proc, SendTo, StripId, Value};
 
+/// Meter bridge height: default and the range the user can drag it through.
+pub const BRIDGE_H: f32 = 84.0;
+pub const BRIDGE_MIN_H: f32 = 60.0;
+pub const BRIDGE_MAX_H: f32 = 320.0;
 pub const STRIP_W: f32 = 86.0;
 /// A linked pair only adds its second meter (10 + 1 px gap) to a normal strip.
 pub const STRIP_W_STEREO: f32 = STRIP_W + 11.0;
@@ -28,6 +32,8 @@ pub struct Ctx<'a> {
     pub preset_undo: bool,
     /// RTA overlay toggle (owned by the app).
     pub rta_on: &'a mut bool,
+    /// Smoothed RTA spectrum (shared with the RTA window).
+    pub rta: &'a crate::rta::RtaTrace,
     /// Set by the EQ view when it was drawn this frame (drives the RTA subscription).
     pub rta_shown: bool,
 }
@@ -360,7 +366,9 @@ pub fn meter_bridge(ui: &mut Ui, c: &mut Ctx) {
     let strips: Vec<StripId> = StripId::all().into_iter().filter(|s| !matches!(s, StripId::Dca(_))).collect();
     let h = ui.available_height();
     let gap = 3.0;
-    let w = ((ui.available_width() - gap * strips.len() as f32) / strips.len() as f32).clamp(10.0, 34.0);
+    // Cells may grow wider on a taller bridge so tall meters do not look like slivers.
+    let max_w = 34.0f32.max(h * 0.35);
+    let w = ((ui.available_width() - gap * strips.len() as f32) / strips.len() as f32).clamp(10.0, max_w);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
         for (i, s) in strips.into_iter().enumerate() {

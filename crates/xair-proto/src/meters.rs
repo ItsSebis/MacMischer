@@ -32,8 +32,9 @@ pub const RTA_BANDS: usize = 100;
 
 /// Parse a `/meters/4` (RTA) blob into [`RTA_BANDS`] dB values clamped to `FLOOR_DB..=0`.
 ///
-/// UNVERIFIED layout: assumed i32 count header followed by >= 100 i16 LE (1/256 dB) values;
-/// the first 100 are used and anything after them is ignored. The count header is not trusted
+/// Layout (hardware-verified on an XR18, fw 1.19): a 204-byte blob = i32 count (100) followed by
+/// 100 i16 LE values in 1/256 dB; -128 dB while the analysed source is silent. The first 100
+/// values are used and anything after them is ignored. The count header is not trusted
 /// (only the actual blob length is). Returns `None` for blobs with fewer than 100 values.
 pub fn parse_rta(blob: &[u8]) -> Option<Vec<f32>> {
     let data = blob.get(4..)?;
@@ -53,6 +54,26 @@ pub fn parse_rta(blob: &[u8]) -> Option<Vec<f32>> {
 /// UNVERIFIED: the mixer's real band layout has not been checked against hardware.
 pub fn rta_band_hz(i: usize) -> f32 {
     20.0 * 1000f32.powf(i.min(RTA_BANDS - 1) as f32 / (RTA_BANDS - 1) as f32)
+}
+
+/// Source value for the main LR bus (`/-stat/rta/source`).
+pub const RTA_SOURCE_LR: i32 = 31;
+/// Highest RTA source value (the monitor output).
+pub const RTA_SOURCE_MAX: i32 = 32;
+
+/// Label of an RTA source as the console shows it: 0..=15 Ch01..Ch16, 16 Aux, 17..=20 Fx1..Fx4,
+/// 21..=26 Bus1..Bus6, 27..=30 Send1..Send4, 31 LR, 32 MON (hardware-verified on an XR18).
+pub fn rta_source_label(v: i32) -> Option<String> {
+    Some(match v {
+        0..=15 => format!("Ch{:02}", v + 1),
+        16 => "Aux".into(),
+        17..=20 => format!("Fx{}", v - 16),
+        21..=26 => format!("Bus{}", v - 20),
+        27..=30 => format!("Send{}", v - 26),
+        31 => "LR".into(),
+        32 => "MON".into(),
+        _ => return None,
+    })
 }
 
 /// Build a blob (used by the mock mixer and tests).
@@ -137,5 +158,18 @@ mod tests {
     fn malformed() {
         assert_eq!(parse(&[1, 0]), None);
         assert_eq!(parse(&[5, 0, 0, 0, 1, 2]), None);
+    }
+
+    #[test]
+    fn rta_source_labels_match_the_console() {
+        assert_eq!(rta_source_label(0).as_deref(), Some("Ch01"));
+        assert_eq!(rta_source_label(15).as_deref(), Some("Ch16"));
+        assert_eq!(rta_source_label(16).as_deref(), Some("Aux"));
+        assert_eq!(rta_source_label(17).as_deref(), Some("Fx1"));
+        assert_eq!(rta_source_label(21).as_deref(), Some("Bus1"));
+        assert_eq!(rta_source_label(27).as_deref(), Some("Send1"));
+        assert_eq!(rta_source_label(RTA_SOURCE_LR).as_deref(), Some("LR"));
+        assert_eq!(rta_source_label(RTA_SOURCE_MAX).as_deref(), Some("MON"));
+        assert_eq!(rta_source_label(33), None);
     }
 }

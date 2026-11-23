@@ -15,6 +15,8 @@ pub struct Prefs {
     pub recent_shows: Vec<PathBuf>,
     /// Safe mode: scene recall needs confirmation (Simple mode when false).
     pub safe_mode: bool,
+    /// Window layout the user dragged to (remembered between launches).
+    pub ui: UiPrefs,
     /// Ignore the scroll wheel / trackpad scroll on faders, bars and EQ bands (no accidental moves).
     pub disable_scroll: bool,
     /// MIDI input: enabled, device and bindings (not part of the show file).
@@ -22,6 +24,22 @@ pub struct Prefs {
     pub midi: crate::midi::MidiPrefs,
     /// Launch update check and the skipped Release.
     pub updates: crate::updater::UpdatePrefs,
+}
+
+/// Layout sizes the user chose by dragging panel edges.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiPrefs {
+    /// Height of the meter bridge in points.
+    pub bridge_h: Option<f32>,
+}
+
+impl UiPrefs {
+    /// Whether a panel height differs enough from the stored one to be worth saving
+    /// (ignores sub-pixel jitter and non-finite values).
+    pub fn moved(stored: Option<f32>, now: f32) -> bool {
+        now.is_finite() && stored.is_none_or(|s| (s - now).abs() > 0.5) && now > 1.0
+    }
 }
 
 impl Prefs {
@@ -134,5 +152,24 @@ mod tests {
         let pr = Prefs { disable_scroll: true, ..Default::default() };
         pr.save_to(&p).unwrap();
         assert!(Prefs::load_from(&p).disable_scroll);
+    }
+
+    #[test]
+    fn bridge_height_round_trips_and_old_files_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("prefs.toml");
+        std::fs::write(&p, "safe_mode = true\n").unwrap();
+        assert_eq!(Prefs::load_from(&p).ui.bridge_h, None);
+        let pr = Prefs { ui: UiPrefs { bridge_h: Some(140.0) }, ..Default::default() };
+        pr.save_to(&p).unwrap();
+        assert_eq!(Prefs::load_from(&p).ui.bridge_h, Some(140.0));
+    }
+
+    #[test]
+    fn small_height_changes_are_not_saved() {
+        assert!(UiPrefs::moved(None, 84.0));
+        assert!(!UiPrefs::moved(Some(84.0), 84.3));
+        assert!(UiPrefs::moved(Some(84.0), 90.0));
+        assert!(!UiPrefs::moved(Some(84.0), f32::NAN));
     }
 }

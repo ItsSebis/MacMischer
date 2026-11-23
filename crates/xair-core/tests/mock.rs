@@ -137,3 +137,16 @@ fn solo_follows_the_linked_partner() {
         mock.get(&Param::Solo(b.solo_index()).path()) == Some(Value::Int(1))
     });
 }
+
+#[test]
+fn rta_source_is_read_and_changes_the_spectrum() {
+    let mock = MockMixer::start();
+    let mixer = Mixer::connect_with(mock.addr(), fast());
+    wait_for("connected", 5, || mixer.status() == Status::Connected);
+    assert_eq!(mixer.state().get(Param::RtaSource), Some(&Value::Int(32)), "defaults to MON like the console");
+    mixer.set_rta_wanted(true);
+    wait_for("rta", 3, || mixer.meters().rta.len() == 100);
+    mixer.set(Param::RtaSource, Value::Int(xair_proto::meters::RTA_SOURCE_LR));
+    wait_for("source sent", 2, || mock.get("/-stat/rta/source") == Some(Value::Int(31)));
+    wait_for("fresh spectrum", 3, || mixer.meters().rta_updated.is_some_and(|t| t.elapsed() < Duration::from_millis(300)));
+}

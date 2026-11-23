@@ -48,6 +48,8 @@ pub struct App {
     show_fx: bool,
     /// EQ view RTA overlay toggle (session only, default off).
     rta_on: bool,
+    rta_ui: crate::rta_view::RtaUi,
+    rta_trace: crate::rta::RtaTrace,
     /// Short status message (e.g. "Locked").
     flash: Option<(String, Instant)>,
     /// Release check; independent of the Console and the mixer connection.
@@ -79,6 +81,8 @@ impl App {
             show_routing: false,
             show_fx: false,
             rta_on: false,
+            rta_ui: Default::default(),
+            rta_trace: Default::default(),
             flash: None,
             updater: {
                 let c = ctx.clone();
@@ -94,6 +98,7 @@ impl App {
             Ok("dca") => app.console.select(StripId::Dca(1)),
             Ok("scenes") => app.scenes.open = true,
             Ok("routing") => app.show_routing = true,
+            Ok("rta") => app.rta_ui.open = true,
             Ok("remote") => app.settings.toggle(crate::settings_view::Tab::Remote),
             Ok("settings") => app.settings.toggle(crate::settings_view::Tab::Safety),
             Ok("eq") => app.view = views::DetailView::Eq,
@@ -114,6 +119,8 @@ impl App {
     fn switch_mixer(&mut self) {
         self.console.reset();
         self.rta_on = false;
+        self.rta_ui.defaulted = false;
+        self.rta_trace.clear();
         self.midi_input.reset();
         let current = match &self.conn {
             Conn::Mixer(m) => Some(m.addr()),
@@ -213,6 +220,14 @@ impl App {
                 Action::OpenRouting => self.show_routing = !self.show_routing,
                 Action::OpenFx => self.show_fx = !self.show_fx,
                 Action::OpenRemote => self.settings.toggle(crate::settings_view::Tab::Remote),
+                Action::OpenRta => {
+                    self.rta_ui.open = !self.rta_ui.open;
+                    // The mixer defaults to analysing MON; the first time the window opens, look at main out.
+                    if self.rta_ui.open && !self.rta_ui.defaulted {
+                        self.rta_ui.defaulted = true;
+                        batch.push(Action::Set(xair_proto::Param::RtaSource, xair_proto::Value::Int(xair_proto::meters::RTA_SOURCE_LR)));
+                    }
+                }
                 Action::OpenSettings => self.settings.toggle(crate::settings_view::Tab::Safety),
                 Action::OpenMidi => self.midi_ui.open = !self.midi_ui.open,
                 Action::SetView(v) => self.view = v,
@@ -428,6 +443,12 @@ impl eframe::App for App {
         let meters = mixer.meters().clone();
         let st = &*st_guard;
         let bank = self.session.banks.current();
+        let rta_fresh = crate::rta::is_fresh(&meters);
+        if !rta_fresh {
+            self.rta_trace.clear();
+        } else if !self.rta_ui.frozen {
+            self.rta_trace.feed(&meters.rta, ctx.input(|i| i.stable_dt));
+        }
         let mut c = views::Ctx {
             st,
             meters: &meters,
@@ -439,6 +460,7 @@ impl eframe::App for App {
             presets: self.console.presets(),
             preset_undo: self.console.preset_undo_available(),
             rta_on: &mut self.rta_on,
+            rta: &self.rta_trace,
             rta_shown: false,
         };
 
@@ -502,6 +524,9 @@ impl eframe::App for App {
                     if ui.button(mtxt).on_hover_text("MIDI controller (Ctrl/Cmd+M)").clicked() {
                         c.actions.push(Action::OpenMidi);
                     }
+                    if ui.button("RTA").on_hover_text("Spectrum analyzer window (Ctrl/Cmd+T)").clicked() {
+                        c.actions.push(Action::OpenRta);
+                    }
                     if ui.button("FX").on_hover_text("Effects rack (Ctrl/Cmd+F)").clicked() {
                         c.actions.push(Action::OpenFx);
                     }
@@ -529,7 +554,17 @@ impl eframe::App for App {
                 });
             });
         });
-        egui::Panel::top("bridge").exact_size(84.0).show(ui, |ui| views::meter_bridge(ui, &mut c));
+        // Meter bridge: drag its bottom edge to resize; the height is remembered in the prefs.
+        let bridge = egui::Panel::top("bridge")
+            .resizable(true)
+            .default_size(self.session.prefs.ui.bridge_h.unwrap_or(views::BRIDGE_H))
+            .size_range(views::BRIDGE_MIN_H..=views::BRIDGE_MAX_H)
+            .show(ui, |ui| views::meter_bridge(ui, &mut c));
+        let bridge_h = bridge.response.rect.height();
+        if crate::prefs::UiPrefs::moved(self.session.prefs.ui.bridge_h, bridge_h) {
+            self.session.prefs.ui.bridge_h = Some(bridge_h);
+            prefs_changed = true;
+        }
         egui::Panel::top("detail").exact_size(230.0).show(ui, |ui| {
             ui.add_space(6.0);
             views::detail(ui, &mut c);
@@ -561,8 +596,8 @@ impl eframe::App for App {
             });
         });
         let names: HashMap<StripId, String> = StripId::all().into_iter().map(|s| (s, st.name(s))).collect();
-        // RTA subscription only while the EQ view is drawn with the toggle on.
-        mixer.set_rta_wanted(*c.rta_on && c.rta_shown);
+        // RTA subscription only while the EQ overlay is on and drawn, or the RTA window is open.
+        mixer.set_rta_wanted((*c.rta_on && c.rta_shown) || self.rta_ui.open);
         let st_for_windows = st;
         if let Some(pl) = self.console.pending_load() {
             let mut answer = None;
@@ -584,6 +619,7 @@ impl eframe::App for App {
             }
         }
         self.scenes.window(&ctx, st_for_windows, self.session.prefs.safe_mode, &mut actions);
+        crate::rta_view::rta_window(&ctx, &mut self.rta_ui, &self.rta_trace, st_for_windows, rta_fresh, &mut actions);
         crate::routing_view::routing_window(&ctx, &mut self.show_routing, st_for_windows, self.console.locked(), &mut actions);
         crate::fx_view::fx_window(&ctx, &mut self.show_fx, st_for_windows, self.console.locked(), &mut actions);
         {
