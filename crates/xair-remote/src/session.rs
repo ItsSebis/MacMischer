@@ -197,11 +197,12 @@ impl Session {
         let strips: Vec<Json> = shown
             .iter()
             .map(|s| {
-                let (name, color, stereo) = match &st {
-                    Some(st) => (st.name(*s), st.color(*s), st.linked_partner(*s).is_some()),
-                    None => (s.to_string(), 0, false),
+                let (name, color, partner) = match &st {
+                    Some(st) => (st.name(*s), st.color(*s), st.linked_partner(*s)),
+                    None => (s.to_string(), 0, None),
                 };
-                json!({"id": s.short(), "name": name, "color": color_hex(color), "stereo": stereo})
+                json!({"id": s.short(), "name": name, "color": color_hex(color), "stereo": partner.is_some(),
+                       "partner": partner.map(|p| p.short())})
             })
             .collect();
         let bus = page.bus.map(|t| match &st {
@@ -257,19 +258,15 @@ impl Session {
                 if page.meters {
                     let mt = m.meters();
                     let st = m.state();
-                    let vals: BTreeMap<String, f32> = st
-                        .display_strips(&page.strips)
-                        .iter()
-                        .filter_map(|s| {
-                            // A pair shows the louder of its two meters.
-                            let db = [Some(*s), st.linked_partner(*s)]
-                                .into_iter()
-                                .flatten()
-                                .filter_map(|x| mt.strip(x))
-                                .reduce(f32::max)?;
-                            Some((s.short(), (db * 10.0).round() / 10.0))
-                        })
-                        .collect();
+                    // A linked pair reports both sides (L under the leader's id, R under its partner's).
+                    let mut vals: BTreeMap<String, f32> = BTreeMap::new();
+                    for s in st.display_strips(&page.strips) {
+                        for x in [Some(s), st.linked_partner(s)].into_iter().flatten() {
+                            if let Some(db) = mt.strip(x) {
+                                vals.insert(x.short(), (db * 10.0).round() / 10.0);
+                            }
+                        }
+                    }
                     out.push(json!({"t":"meters","m":vals}));
                 }
             }
@@ -432,6 +429,7 @@ mod tests {
         let ids: Vec<&str> = msg["strips"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["3", "1"]);
         assert_eq!(msg["strips"][0]["stereo"], true);
+        assert_eq!(msg["strips"][0]["partner"], "4");
         let mut out = Vec::new();
         r.s.handle(level("3", 0.6), &mut out);
         r.s.handle(In::Mute { strip: "3".into(), muted: true }, &mut out);
