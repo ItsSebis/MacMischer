@@ -68,6 +68,16 @@ fn controls(ui: &mut egui::Ui, ui_state: &mut RtaUi, trace: &RtaTrace, st: &Mixe
             })
             .response
             .on_hover_text("The mixer analyses one source at a time; this is the same setting as on the console, so it changes there too.");
+        let pos = st.get(Param::RtaPos).and_then(Value::as_i32);
+        ui.label("Tap");
+        for (v, label, tip) in [
+            (meters::RTA_POS_PRE, "Pre", "Before the source's EQ, filters and fader"),
+            (meters::RTA_POS_POST, "Post", "After the source's EQ, filters and fader"),
+        ] {
+            if ui.selectable_label(pos == Some(v), label).on_hover_text(tip).clicked() && pos != Some(v) {
+                actions.push(Action::Set(Param::RtaPos, Value::Int(v)));
+            }
+        }
         ui.separator();
         ui.checkbox(&mut ui_state.auto_gain, "Auto gain").on_hover_text("Follow the signal level instead of a fixed -100..0 dB window");
         ui.checkbox(&mut ui_state.peak_hold, "Peak hold");

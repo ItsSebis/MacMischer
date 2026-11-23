@@ -85,6 +85,7 @@ fn default_for(p: Param) -> Value {
         Param::Proc(s, p) => proc_default(s, p),
         Param::FxType(n) => Value::Int(n as i32 - 1),
         Param::FxPar(..) => Value::Float(0.5),
+        Param::RtaPos => Value::Int(meters::RTA_POS_PRE),
         Param::RtaSource => Value::Int(meters::RTA_SOURCE_MAX), // the console defaults to MON
         Param::SnapIndex => Value::Int(1),
         Param::SnapName(1) => Value::Str("Home".into()),

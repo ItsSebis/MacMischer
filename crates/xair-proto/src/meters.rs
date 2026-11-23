@@ -58,6 +58,9 @@ pub fn rta_band_hz(i: usize) -> f32 {
 
 /// Source value for the main LR bus (`/-stat/rta/source`).
 pub const RTA_SOURCE_LR: i32 = 31;
+/// `/-stat/rta/pos` values: the RTA taps the source before (PRE) or after (POST) its processing.
+pub const RTA_POS_PRE: i32 = 0;
+pub const RTA_POS_POST: i32 = 1;
 /// Highest RTA source value (the monitor output).
 pub const RTA_SOURCE_MAX: i32 = 32;
 

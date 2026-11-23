@@ -12,6 +12,10 @@ use xair_proto::{fader, Param, Proc, SendTo, StripId, Value};
 pub const BRIDGE_H: f32 = 84.0;
 pub const BRIDGE_MIN_H: f32 = 60.0;
 pub const BRIDGE_MAX_H: f32 = 320.0;
+/// Detail panel height.
+pub const DETAIL_H: f32 = 230.0;
+/// Height the strip row (and the main strip with its master section) needs to stay on screen.
+pub const MIN_STRIPS_H: f32 = 400.0;
 pub const STRIP_W: f32 = 86.0;
 /// A linked pair only adds its second meter (10 + 1 px gap) to a normal strip.
 pub const STRIP_W_STEREO: f32 = STRIP_W + 11.0;

@@ -222,10 +222,11 @@ impl App {
                 Action::OpenRemote => self.settings.toggle(crate::settings_view::Tab::Remote),
                 Action::OpenRta => {
                     self.rta_ui.open = !self.rta_ui.open;
-                    // The mixer defaults to analysing MON; the first time the window opens, look at main out.
+                    // The mixer defaults to analysing MON before processing; the first time the window opens, look at main out, post.
                     if self.rta_ui.open && !self.rta_ui.defaulted {
                         self.rta_ui.defaulted = true;
                         batch.push(Action::Set(xair_proto::Param::RtaSource, xair_proto::Value::Int(xair_proto::meters::RTA_SOURCE_LR)));
+                        batch.push(Action::Set(xair_proto::Param::RtaPos, xair_proto::Value::Int(xair_proto::meters::RTA_POS_POST)));
                     }
                 }
                 Action::OpenSettings => self.settings.toggle(crate::settings_view::Tab::Safety),
@@ -500,22 +501,21 @@ impl eframe::App for App {
                         c.actions.push(Action::ToggleLock);
                     }
                     let mode = if self.session.prefs.safe_mode { "Safe" } else { "Simple" };
-                    if ui.button(format!("Settings · {mode}")).on_hover_text("Remote, safety and scroll wheel (Ctrl/Cmd+,)").clicked() {
+                    let remote = match (self.session.remote.enabled, self.remote.clients()) {
+                        (true, n) if n > 0 => format!(" · Remote: {n}"),
+                        _ => String::new(),
+                    };
+                    if ui
+                        .button(format!("Settings · {mode}{remote}"))
+                        .on_hover_text("Web remote, safety, scroll wheel and updates (Ctrl/Cmd+,; Ctrl/Cmd+P opens the remote tab)")
+                        .clicked()
+                    {
                         c.actions.push(Action::OpenSettings);
                     }
                     ui.separator();
                     ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).color(theme::DIM))
                         .on_hover_text("MacMischer version");
                     ui.separator();
-                    let clients = self.remote.clients();
-                    let rtxt = match (self.session.remote.enabled, clients) {
-                        (false, _) => "Remote".to_string(),
-                        (true, 0) => "Remote on".to_string(),
-                        (true, n) => format!("Remote: {n}"),
-                    };
-                    if ui.button(rtxt).on_hover_text("Web remote for phones/tablets (Ctrl/Cmd+P)").clicked() {
-                        c.actions.push(Action::OpenRemote);
-                    }
                     let mtxt = match (self.session.prefs.midi.enabled, self.midi.status()) {
                         (true, crate::midi::MidiStatus::Connected(_)) => egui::RichText::new("MIDI").color(theme::OK),
                         (true, _) => egui::RichText::new("MIDI").color(theme::WARN),
@@ -555,17 +555,20 @@ impl eframe::App for App {
             });
         });
         // Meter bridge: drag its bottom edge to resize; the height is remembered in the prefs.
+        // Never let it grow so far that the detail panel and the strips (incl. the main strip) no longer fit.
+        let bridge_max = (ui.available_height() - views::DETAIL_H - views::MIN_STRIPS_H)
+            .clamp(views::BRIDGE_MIN_H, views::BRIDGE_MAX_H);
         let bridge = egui::Panel::top("bridge")
             .resizable(true)
-            .default_size(self.session.prefs.ui.bridge_h.unwrap_or(views::BRIDGE_H))
-            .size_range(views::BRIDGE_MIN_H..=views::BRIDGE_MAX_H)
+            .default_size(self.session.prefs.ui.bridge_h.unwrap_or(views::BRIDGE_H).min(bridge_max))
+            .size_range(views::BRIDGE_MIN_H..=bridge_max)
             .show(ui, |ui| views::meter_bridge(ui, &mut c));
         let bridge_h = bridge.response.rect.height();
         if crate::prefs::UiPrefs::moved(self.session.prefs.ui.bridge_h, bridge_h) {
             self.session.prefs.ui.bridge_h = Some(bridge_h);
             prefs_changed = true;
         }
-        egui::Panel::top("detail").exact_size(230.0).show(ui, |ui| {
+        egui::Panel::top("detail").exact_size(views::DETAIL_H).show(ui, |ui| {
             ui.add_space(6.0);
             views::detail(ui, &mut c);
         });

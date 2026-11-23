@@ -107,6 +107,8 @@ pub enum Param {
     Solo(u8),
     /// int RTA analysis source, see `meters::rta_source_label` (0..=32; hardware-verified on an XR18)
     RtaSource,
+    /// int RTA tap point: 0 = PRE (before the strip's EQ/dynamics/fader), 1 = POST (hardware-verified)
+    RtaPos,
     /// int current snapshot index
     SnapIndex,
     /// string snapshot name 1..64
@@ -155,6 +157,7 @@ impl Param {
             Param::Phantom(h) => format!("/headamp/{h:02}/phantom"),
             Param::Solo(i) => format!("/-stat/solosw/{i:02}"),
             Param::RtaSource => "/-stat/rta/source".into(),
+            Param::RtaPos => "/-stat/rta/pos".into(),
             Param::SnapIndex => "/-snap/index".into(),
             Param::SnapName(i) => format!("/-snap/{i:02}/name"),
             Param::InSrc(s) => format!("{}/config/insrc", s.prefix()),
@@ -210,6 +213,7 @@ impl Param {
             ["", "headamp", n, "phantom"] => Some(Param::Phantom(n.parse().ok()?)),
             ["", "-stat", "solosw", n] => Some(Param::Solo(n.parse().ok()?)),
             ["", "-stat", "rta", "source"] => Some(Param::RtaSource),
+            ["", "-stat", "rta", "pos"] => Some(Param::RtaPos),
             ["", "-snap", "index"] => Some(Param::SnapIndex),
             ["", "config", "mute", n] => Some(Param::MuteGroupOn(n.parse().ok()?)),
             ["", "config", "solo", "level"] => Some(Param::MonitorLevel),
@@ -333,6 +337,7 @@ impl Param {
             v.extend((1..=FX_PARAMS).map(|i| Param::FxPar(n, i)));
         }
         v.push(Param::RtaSource);
+        v.push(Param::RtaPos);
         v.push(Param::SnapIndex);
         for i in 1..=64 {
             v.push(Param::SnapName(i));
