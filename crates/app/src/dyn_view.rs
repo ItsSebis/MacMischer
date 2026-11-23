@@ -11,20 +11,57 @@ use xair_proto::{Param, Proc, StripId, Value};
 
 const PLOT: f32 = 140.0;
 
-pub fn dyn_view(ui: &mut Ui, c: &mut Ctx, s: StripId) {
+/// Minimum width of one section (plot + two bar columns at their narrowest bars).
+const SECTION_MIN_W: f32 = 500.0;
+/// Width of the A/B + Presets column to the left of the sections.
+const AB_COL_W: f32 = 180.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sub {
+    Gate,
+    Comp,
+}
+
+/// `avail` is the width the view may use (the caller measured it outside any scroll area).
+/// Gate and compressor sit side by side; only when that does not fit are they split into two
+/// sub-tabs, and if even one section does not fit the detail panel scrolls sideways.
+pub fn dyn_view(ui: &mut Ui, c: &mut Ctx, s: StripId, avail: f32) {
     let gate = proc::has_gate(s);
     let dynamics = proc::has_dyn(s);
-    let avail = ui.available_width();
+    let both = gate && dynamics;
+    let avail = (avail - AB_COL_W).max(0.0);
+    let side_by_side = both && avail >= 2.0 * SECTION_MIN_W + 30.0;
     crate::views::ab_buttons(ui, c);
+    if both && !side_by_side {
+        let id = egui::Id::unique("dyn-sub");
+        let mut sub = ui.data(|d| d.get_temp::<bool>(id)).map_or(Sub::Gate, |g| if g { Sub::Gate } else { Sub::Comp });
+        // The tabs take the place of the section heading, so the split costs no height.
+        let w = avail.clamp(SECTION_MIN_W, 700.0);
+        ui.allocate_ui(Vec2::new(w, 200.0), |ui| {
+            ui.set_width(w);
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut sub, Sub::Gate, "Gate");
+                    ui.selectable_value(&mut sub, Sub::Comp, "Compressor");
+                });
+                match sub {
+                    Sub::Gate => gate_section(ui, c, s, w, false),
+                    Sub::Comp => comp_section(ui, c, s, w, false),
+                }
+            });
+        });
+        ui.data_mut(|d| d.insert_temp(id, sub == Sub::Gate));
+        return;
+    }
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
-        let w = if gate && dynamics { (avail - 30.0) / 2.0 } else { avail.min(700.0) };
+        let w = if both { (avail - 30.0) / 2.0 } else { avail.clamp(SECTION_MIN_W, 700.0) };
         if gate {
-            ui.allocate_ui(Vec2::new(w, 200.0), |ui| gate_section(ui, c, s, w));
+            ui.allocate_ui(Vec2::new(w, 200.0), |ui| gate_section(ui, c, s, w, true));
             ui.separator();
         }
         if dynamics {
-            ui.allocate_ui(Vec2::new(w, 200.0), |ui| comp_section(ui, c, s, w));
+            ui.allocate_ui(Vec2::new(w, 200.0), |ui| comp_section(ui, c, s, w, true));
         }
     });
 }
@@ -108,10 +145,12 @@ fn bar_w_for(w: f32) -> f32 {
     (((w - PLOT - 24.0) / 2.0) - 48.0 - 52.0 - 12.0).clamp(50.0, 140.0)
 }
 
-fn gate_section(ui: &mut Ui, c: &mut Ctx, s: StripId, w: f32) {
+fn gate_section(ui: &mut Ui, c: &mut Ctx, s: StripId, w: f32, titled: bool) {
     ui.set_width(w);
     ui.vertical(|ui| {
-        ui.label(RichText::new("GATE").size(11.0).strong().color(theme::DIM));
+        if titled {
+            ui.label(RichText::new("GATE").size(11.0).strong().color(theme::DIM));
+        }
         ui.horizontal(|ui| {
             on_toggle(ui, c, s, Proc::GateOn, "On");
             small_label(ui, "Mode");
@@ -137,10 +176,12 @@ fn gate_section(ui: &mut Ui, c: &mut Ctx, s: StripId, w: f32) {
     });
 }
 
-fn comp_section(ui: &mut Ui, c: &mut Ctx, s: StripId, w: f32) {
+fn comp_section(ui: &mut Ui, c: &mut Ctx, s: StripId, w: f32, titled: bool) {
     ui.set_width(w);
     ui.vertical(|ui| {
-        ui.label(RichText::new("COMPRESSOR").size(11.0).strong().color(theme::DIM));
+        if titled {
+            ui.label(RichText::new("COMPRESSOR").size(11.0).strong().color(theme::DIM));
+        }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             on_toggle(ui, c, s, Proc::DynOn, "On");

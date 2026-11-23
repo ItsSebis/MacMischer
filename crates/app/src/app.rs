@@ -50,6 +50,8 @@ pub struct App {
     rta_on: bool,
     rta_ui: crate::rta_view::RtaUi,
     rta_trace: crate::rta::RtaTrace,
+    /// Height of the meters+detail band as drawn last frame (the RTA dock spans it).
+    upper_h: Option<f32>,
     /// Short status message (e.g. "Locked").
     flash: Option<(String, Instant)>,
     /// Release check; independent of the Console and the mixer connection.
@@ -83,6 +85,7 @@ impl App {
             rta_on: false,
             rta_ui: Default::default(),
             rta_trace: Default::default(),
+            upper_h: None,
             flash: None,
             updater: {
                 let c = ctx.clone();
@@ -100,6 +103,11 @@ impl App {
             Ok("scenes") => app.scenes.open = true,
             Ok("routing") => app.show_routing = true,
             Ok("rta") => app.rta_ui.open = true,
+            Ok("dyn-docked") => {
+                app.rta_ui.open = true;
+                app.rta_ui.docked = true;
+                app.view = views::DetailView::Dynamics;
+            }
             Ok("rta-docked") => {
                 app.rta_ui.open = true;
                 app.rta_ui.docked = true;
@@ -567,41 +575,56 @@ impl eframe::App for App {
         let mut dock_w = None;
         let docked = self.rta_ui.open && self.rta_ui.docked;
         let dock_default_w = self.session.prefs.ui.rta_dock_w.unwrap_or(420.0);
-        let bridge = egui::Panel::top("bridge")
-            .resizable(true)
-            .default_size(self.session.prefs.ui.bridge_h.unwrap_or(views::BRIDGE_H).min(bridge_max))
-            .size_range(views::BRIDGE_MIN_H..=bridge_max)
-            .show(ui, |ui| {
-                // The RTA can sit on the right of the meters; the meters use the width that is left.
-                if docked {
-                    let max_w = (ui.available_width() * 0.7).max(240.0);
-                    let r = egui::Panel::right("rta_dock")
-                        .resizable(true)
-                        .default_size(dock_default_w.clamp(240.0, max_w))
-                        .size_range(240.0..=max_w)
-                        .show(ui, |ui| {
-                            crate::rta_view::contents(ui, &mut self.rta_ui, c.rta, c.st, rta_fresh, c.actions, 40.0)
-                        });
-                    dock_out = r.inner;
-                    dock_w = Some(r.response.rect.width());
-                }
-                views::meter_bridge(ui, &mut c)
+        let bridge_default = self.session.prefs.ui.bridge_h.unwrap_or(views::BRIDGE_H).min(bridge_max);
+        let upper_h = self.upper_h.unwrap_or(bridge_default + views::DETAIL_H);
+        let mut measured = None;
+        let mut bridge_now = None;
+        // One band across the top holds meters + detail on the left and, when docked, the RTA on the
+        // right spanning both. Its height is what the two panels inside used last frame.
+        egui::Panel::top("upper").exact_size(upper_h).frame(egui::Frame::NONE).show(ui, |ui| {
+            if docked {
+                let max_w = (ui.available_width() * 0.7).max(240.0);
+                let r = egui::Panel::right("rta_dock")
+                    .resizable(true)
+                    .default_size(dock_default_w.clamp(240.0, max_w))
+                    .size_range(240.0..=max_w)
+                    .show(ui, |ui| crate::rta_view::contents(ui, &mut self.rta_ui, c.rta, c.st, rta_fresh, c.actions, 40.0));
+                dock_out = r.inner;
+                dock_w = Some(r.response.rect.width());
+            }
+            let bridge = egui::Panel::top("bridge")
+                .resizable(true)
+                .default_size(bridge_default)
+                .size_range(views::BRIDGE_MIN_H..=bridge_max)
+                .show(ui, |ui| views::meter_bridge(ui, &mut c));
+            let detail = egui::Panel::top("detail").exact_size(views::DETAIL_H).show(ui, |ui| {
+                ui.add_space(6.0);
+                views::detail(ui, &mut c);
             });
+            bridge_now = Some(bridge.response.rect.height());
+            // The detail panel's own height is clamped by the space it gets, so it must not feed back;
+            // the band is the bridge's height plus the detail panel's fixed height.
+            let _ = detail;
+            measured = Some(bridge.response.rect.height() + views::DETAIL_H);
+        });
+        if let Some(h) = measured {
+            if (h - upper_h).abs() > 0.5 {
+                ctx.request_repaint();
+            }
+            self.upper_h = Some(h);
+        }
         if let Some(w) = dock_w {
             if crate::prefs::UiPrefs::moved(self.session.prefs.ui.rta_dock_w, w) {
                 self.session.prefs.ui.rta_dock_w = Some(w);
                 prefs_changed = true;
             }
         }
-        let bridge_h = bridge.response.rect.height();
-        if crate::prefs::UiPrefs::moved(self.session.prefs.ui.bridge_h, bridge_h) {
-            self.session.prefs.ui.bridge_h = Some(bridge_h);
-            prefs_changed = true;
+        if let Some(h) = bridge_now {
+            if crate::prefs::UiPrefs::moved(self.session.prefs.ui.bridge_h, h) {
+                self.session.prefs.ui.bridge_h = Some(h);
+                prefs_changed = true;
+            }
         }
-        egui::Panel::top("detail").exact_size(views::DETAIL_H).show(ui, |ui| {
-            ui.add_space(6.0);
-            views::detail(ui, &mut c);
-        });
         egui::Panel::right("main").exact_size(views::STRIP_W_STEREO + 16.0).show(ui, |ui| {
             ui.add_space(6.0);
             views::master_section(ui, &mut c);

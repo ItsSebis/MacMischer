@@ -126,7 +126,7 @@ fn controls(ui: &mut egui::Ui, ui_state: &mut RtaUi, trace: &RtaTrace, st: &Mixe
         if ui.button(label).on_hover_text(tip).clicked() {
             out.toggle_dock = true;
         }
-        if ui_state.docked && ui.button("✕").on_hover_text("Close the RTA").clicked() {
+        if ui_state.docked && crate::widgets::icon_button(ui, crate::widgets::Icon::Remove, true).on_hover_text("Close the RTA").clicked() {
             out.close = true;
         }
     });
@@ -143,11 +143,17 @@ fn plot(ui: &mut egui::Ui, rect: Rect, ui_state: &RtaUi, trace: &RtaTrace, fresh
     let grid = Stroke::new(1.0, theme::BORDER.linear_multiply(0.6));
     let font = FontId::proportional(10.0);
 
+    let mut label_end = f32::NEG_INFINITY; // right edge of the last label drawn; skip labels that would overlap
     for hz in FREQ_LINES {
         let x = fx(hz);
         p.line_segment([Pos2::new(x, area.top()), Pos2::new(x, area.bottom())], grid);
-        let align = if hz >= 20000.0 { Align2::RIGHT_TOP } else { Align2::CENTER_TOP };
-        p.text(Pos2::new(x, area.bottom() + 2.0), align, fmt_hz(hz), font.clone(), theme::DIM);
+        let text = fmt_hz(hz);
+        let w = text.chars().count() as f32 * 5.5;
+        let (left, align) = if hz >= 20000.0 { (x - w, Align2::RIGHT_TOP) } else { (x - w / 2.0, Align2::CENTER_TOP) };
+        if left > label_end + 4.0 {
+            p.text(Pos2::new(x, area.bottom() + 2.0), align, text, font.clone(), theme::DIM);
+            label_end = left + w;
+        }
     }
     let step = if range.1 - range.0 > 80.0 { 20.0 } else { 10.0 };
     let mut db = (range.0 / step).ceil() * step;

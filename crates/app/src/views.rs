@@ -373,7 +373,9 @@ pub fn meter_bridge(ui: &mut Ui, c: &mut Ctx) {
     // Cells use the whole width (minus the group gaps), so on a big screen the meters get wider.
     let groups = 4.0 * 6.0;
     let w = ((ui.available_width() - gap * strips.len() as f32 - groups) / strips.len() as f32).clamp(10.0, 90.0);
-    ui.horizontal(|ui| {
+    // Scrolls sideways instead of clipping when the panel is narrower than the minimum cell widths.
+    egui::ScrollArea::horizontal().id_salt("bridge-scroll").auto_shrink([false, false]).show(ui, |ui| {
+      ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
         for (i, s) in strips.into_iter().enumerate() {
             if i == 16 || i == 21 || i == 27 || i == 31 {
@@ -400,10 +402,24 @@ pub fn meter_bridge(ui: &mut Ui, c: &mut Ctx) {
             resp.on_hover_text(c.st.name(s));
         }
     });
+    });
 }
 
 /// Detail panel for the selected strip.
 pub fn detail(ui: &mut Ui, c: &mut Ctx) {
+    // Never clip: if the content is wider than the panel (e.g. beside a docked RTA) it scrolls.
+    // `visible_w` is measured before the scroll area, whose content width is unbounded.
+    let visible_w = ui.available_width();
+    egui::ScrollArea::horizontal()
+        .id_salt("detail-scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| detail_content(ui, c, visible_w));
+}
+
+/// Width taken by the identity column and its separator in the detail panel.
+const DETAIL_SIDE_W: f32 = 230.0;
+
+fn detail_content(ui: &mut Ui, c: &mut Ctx, visible_w: f32) {
     let s = c.selected;
     ui.horizontal(|ui| {
         // Identity + level
@@ -453,7 +469,7 @@ pub fn detail(ui: &mut Ui, c: &mut Ctx) {
                 return;
             }
             DetailView::Dynamics if xair_proto::proc::has_dyn(s) || xair_proto::proc::has_gate(s) => {
-                crate::dyn_view::dyn_view(ui, c, s);
+                crate::dyn_view::dyn_view(ui, c, s, (visible_w - DETAIL_SIDE_W).max(0.0));
                 return;
             }
             _ => {}
