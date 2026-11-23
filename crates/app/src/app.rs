@@ -482,11 +482,6 @@ impl eframe::App for App {
                         c.actions.push(Action::OpenSettings);
                     }
                     ui.separator();
-                    let mut check = self.updater.prefs().check_at_launch;
-                    if ui.checkbox(&mut check, "Check for updates at launch").clicked() {
-                        self.updater.set_check_at_launch(check);
-                        Self::sync_update_prefs(&mut self.session.prefs, &self.updater);
-                    }
                     ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).color(theme::DIM))
                         .on_hover_text("MacMischer version");
                     ui.separator();
@@ -593,10 +588,12 @@ impl eframe::App for App {
         crate::fx_view::fx_window(&ctx, &mut self.show_fx, st_for_windows, self.console.locked(), &mut actions);
         {
             let (status, clients) = (self.remote.status(), self.remote.clients());
-            prefs_changed |= crate::settings_view::settings_window(
+            let mut check = self.updater.prefs().check_at_launch;
+            let changed = crate::settings_view::settings_window(
                 &ctx,
                 &mut self.settings,
                 &mut self.session.prefs,
+                &mut check,
                 &mut self.session.remote,
                 status,
                 clients,
@@ -604,6 +601,11 @@ impl eframe::App for App {
                 self.session.banks.index(),
                 &names,
             );
+            if check != self.updater.prefs().check_at_launch {
+                self.updater.set_check_at_launch(check);
+                Self::sync_update_prefs(&mut self.session.prefs, &self.updater);
+            }
+            prefs_changed |= changed;
         }
         crate::widgets::set_scroll_disabled(self.session.prefs.disable_scroll);
         prefs_changed |= crate::midi_view::midi_window(

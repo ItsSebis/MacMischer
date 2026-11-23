@@ -14,6 +14,7 @@ pub enum Tab {
     #[default]
     Remote,
     Safety,
+    Updates,
 }
 
 #[derive(Default)]
@@ -36,6 +37,7 @@ pub fn settings_window(
     ctx: &egui::Context,
     ui_state: &mut SettingsUi,
     prefs: &mut Prefs,
+    check_at_launch: &mut bool,
     remote_cfg: &mut RemoteConfig,
     remote_status: RemoteStatus,
     clients: usize,
@@ -59,6 +61,7 @@ pub fn settings_window(
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut ui_state.tab, Tab::Remote, "Remote");
                 ui.selectable_value(&mut ui_state.tab, Tab::Safety, "Safety");
+                ui.selectable_value(&mut ui_state.tab, Tab::Updates, "Updates");
             });
             ui.separator();
             egui::ScrollArea::vertical().max_height(max_h - 90.0).auto_shrink([false, true]).show(ui, |ui| {
@@ -68,6 +71,12 @@ pub fn settings_window(
                         crate::remote_view::remote_panel(ui, remote_cfg, remote_status, clients, banks, current_bank, names)
                     }
                     Tab::Safety => changed |= safety(ui, prefs),
+                    Tab::Updates => {
+                        changed |= ui.checkbox(check_at_launch, "Check for updates at launch").changed();
+                        ui.label(
+                            egui::RichText::new(concat!("MacMischer v", env!("CARGO_PKG_VERSION"))).size(11.0).color(theme::DIM),
+                        );
+                    }
                 }
             });
         });
