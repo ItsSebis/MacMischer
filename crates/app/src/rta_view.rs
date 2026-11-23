@@ -11,6 +11,8 @@ use xair_proto::{meters, Param, Value};
 
 pub struct RtaUi {
     pub open: bool,
+    /// Shown beside the meter bridge instead of in its own window.
+    pub docked: bool,
     /// Auto gain: the dB window follows the signal.
     pub auto_gain: bool,
     pub peak_hold: bool,
@@ -22,7 +24,7 @@ pub struct RtaUi {
 
 impl Default for RtaUi {
     fn default() -> Self {
-        RtaUi { open: false, auto_gain: true, peak_hold: true, frozen: false, defaulted: false }
+        RtaUi { open: false, docked: false, auto_gain: true, peak_hold: true, frozen: false, defaulted: false }
     }
 }
 
@@ -30,28 +32,59 @@ const MARGIN_L: f32 = 36.0;
 const MARGIN_B: f32 = 18.0;
 const FREQ_LINES: [f32; 10] = [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0];
 
-pub fn rta_window(ctx: &egui::Context, ui_state: &mut RtaUi, trace: &RtaTrace, st: &MixerState, fresh: bool, actions: &mut Vec<Action>) {
-    if !ui_state.open {
-        return;
-    }
-    let mut open = true;
-    egui::Window::new("RTA")
-        .open(&mut open)
-        .resizable(true)
-        .default_size([900.0, 440.0])
-        .min_size([480.0, 260.0])
-        .show(ctx, |ui| {
-            controls(ui, ui_state, trace, st, actions);
-            ui.add_space(4.0);
-            let size = ui.available_size().max(Vec2::new(200.0, 160.0));
-            let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-            plot(ui, rect, ui_state, trace, fresh);
-        });
-    ui_state.open = open;
+/// What the user asked for in the RTA controls this frame.
+#[derive(Default, Clone, Copy)]
+pub struct Outcome {
+    /// Switch between its own window and the dock beside the meters.
+    pub toggle_dock: bool,
+    /// Close it (docked only; a window has its own close button).
+    pub close: bool,
 }
 
-fn controls(ui: &mut egui::Ui, ui_state: &mut RtaUi, trace: &RtaTrace, st: &MixerState, actions: &mut Vec<Action>) {
-    ui.horizontal(|ui| {
+/// The RTA in its own native window (movable, can sit on another screen). Falls back to an
+/// in-app floating window when the backend has no multi-window support.
+pub fn rta_window(ctx: &egui::Context, ui_state: &mut RtaUi, trace: &RtaTrace, st: &MixerState, fresh: bool, actions: &mut Vec<Action>) -> Outcome {
+    let mut out = Outcome::default();
+    if !ui_state.open || ui_state.docked {
+        return out;
+    }
+    let builder = egui::ViewportBuilder::default()
+        .with_title("MacMischer RTA")
+        .with_inner_size([900.0, 440.0])
+        .with_min_inner_size([480.0, 260.0]);
+    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("rta-window"), builder, |ui, _class| {
+        // The same body for a native window (root ui) and the embedded fallback (a Window's ui).
+        egui::CentralPanel::default().show(ui, |ui| {
+            out = contents(ui, ui_state, trace, st, fresh, actions, 160.0);
+        });
+        if ui.input(|i| i.viewport().close_requested()) {
+            ui_state.open = false;
+        }
+    });
+    out
+}
+
+/// Controls and plot; shared by the window and the dock. `min_plot_h` is the smallest plot height.
+pub fn contents(
+    ui: &mut egui::Ui,
+    ui_state: &mut RtaUi,
+    trace: &RtaTrace,
+    st: &MixerState,
+    fresh: bool,
+    actions: &mut Vec<Action>,
+    min_plot_h: f32,
+) -> Outcome {
+    let out = controls(ui, ui_state, trace, st, actions);
+    ui.add_space(2.0);
+    let size = ui.available_size().max(Vec2::new(120.0, min_plot_h));
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    plot(ui, rect, ui_state, trace, fresh);
+    out
+}
+
+fn controls(ui: &mut egui::Ui, ui_state: &mut RtaUi, trace: &RtaTrace, st: &MixerState, actions: &mut Vec<Action>) -> Outcome {
+    let mut out = Outcome::default();
+    ui.horizontal_wrapped(|ui| {
         let cur = st.get(Param::RtaSource).and_then(Value::as_i32);
         let shown = cur.and_then(meters::rta_source_label).unwrap_or_else(|| "…".into());
         ui.label("Source");
@@ -84,7 +117,20 @@ fn controls(ui: &mut egui::Ui, ui_state: &mut RtaUi, trace: &RtaTrace, st: &Mixe
         ui.checkbox(&mut ui_state.frozen, "Freeze");
         let (lo, hi) = trace.range(ui_state.auto_gain);
         ui.label(egui::RichText::new(format!("{lo:.0} … {hi:.0} dB")).size(11.0).color(theme::DIM));
+        ui.separator();
+        let (label, tip) = if ui_state.docked {
+            ("Pop out", "Move the RTA into its own window")
+        } else {
+            ("Dock", "Show the RTA beside the meter bridge")
+        };
+        if ui.button(label).on_hover_text(tip).clicked() {
+            out.toggle_dock = true;
+        }
+        if ui_state.docked && ui.button("✕").on_hover_text("Close the RTA").clicked() {
+            out.close = true;
+        }
     });
+    out
 }
 
 fn plot(ui: &mut egui::Ui, rect: Rect, ui_state: &RtaUi, trace: &RtaTrace, fresh: bool) {

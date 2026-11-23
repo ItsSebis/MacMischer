@@ -370,9 +370,9 @@ pub fn meter_bridge(ui: &mut Ui, c: &mut Ctx) {
     let strips: Vec<StripId> = StripId::all().into_iter().filter(|s| !matches!(s, StripId::Dca(_))).collect();
     let h = ui.available_height();
     let gap = 3.0;
-    // Cells may grow wider on a taller bridge so tall meters do not look like slivers.
-    let max_w = 34.0f32.max(h * 0.35);
-    let w = ((ui.available_width() - gap * strips.len() as f32) / strips.len() as f32).clamp(10.0, max_w);
+    // Cells use the whole width (minus the group gaps), so on a big screen the meters get wider.
+    let groups = 4.0 * 6.0;
+    let w = ((ui.available_width() - gap * strips.len() as f32 - groups) / strips.len() as f32).clamp(10.0, 90.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
         for (i, s) in strips.into_iter().enumerate() {
@@ -391,7 +391,7 @@ pub fn meter_bridge(ui: &mut Ui, c: &mut Ctx) {
                 Pos2::new(rect.center().x, rect.bottom() - 6.0),
                 Align2::CENTER_CENTER,
                 s.short(),
-                FontId::proportional(9.5),
+                FontId::proportional((w * 0.4).clamp(9.5, 12.0)),
                 col,
             );
             if resp.clicked() {

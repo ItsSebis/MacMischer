@@ -91,6 +91,7 @@ impl App {
                 u
             },
         };
+        app.rta_ui.docked = app.session.prefs.ui.rta_docked;
         // Dev aid for screenshots: MM_SHOW=editor|help|dca|scenes|routing opens that dialog on start.
         match std::env::var("MM_SHOW").as_deref() {
             Ok("editor") => app.editor = Some(BankEditor::open(0, &app.session.banks.list()[0])),
@@ -99,6 +100,10 @@ impl App {
             Ok("scenes") => app.scenes.open = true,
             Ok("routing") => app.show_routing = true,
             Ok("rta") => app.rta_ui.open = true,
+            Ok("rta-docked") => {
+                app.rta_ui.open = true;
+                app.rta_ui.docked = true;
+            }
             Ok("remote") => app.settings.toggle(crate::settings_view::Tab::Remote),
             Ok("settings") => app.settings.toggle(crate::settings_view::Tab::Safety),
             Ok("eq") => app.view = views::DetailView::Eq,
@@ -558,11 +563,36 @@ impl eframe::App for App {
         // Never let it grow so far that the detail panel and the strips (incl. the main strip) no longer fit.
         let bridge_max = (ui.available_height() - views::DETAIL_H - views::MIN_STRIPS_H)
             .clamp(views::BRIDGE_MIN_H, views::BRIDGE_MAX_H);
+        let mut dock_out = crate::rta_view::Outcome::default();
+        let mut dock_w = None;
+        let docked = self.rta_ui.open && self.rta_ui.docked;
+        let dock_default_w = self.session.prefs.ui.rta_dock_w.unwrap_or(420.0);
         let bridge = egui::Panel::top("bridge")
             .resizable(true)
             .default_size(self.session.prefs.ui.bridge_h.unwrap_or(views::BRIDGE_H).min(bridge_max))
             .size_range(views::BRIDGE_MIN_H..=bridge_max)
-            .show(ui, |ui| views::meter_bridge(ui, &mut c));
+            .show(ui, |ui| {
+                // The RTA can sit on the right of the meters; the meters use the width that is left.
+                if docked {
+                    let max_w = (ui.available_width() * 0.7).max(240.0);
+                    let r = egui::Panel::right("rta_dock")
+                        .resizable(true)
+                        .default_size(dock_default_w.clamp(240.0, max_w))
+                        .size_range(240.0..=max_w)
+                        .show(ui, |ui| {
+                            crate::rta_view::contents(ui, &mut self.rta_ui, c.rta, c.st, rta_fresh, c.actions, 40.0)
+                        });
+                    dock_out = r.inner;
+                    dock_w = Some(r.response.rect.width());
+                }
+                views::meter_bridge(ui, &mut c)
+            });
+        if let Some(w) = dock_w {
+            if crate::prefs::UiPrefs::moved(self.session.prefs.ui.rta_dock_w, w) {
+                self.session.prefs.ui.rta_dock_w = Some(w);
+                prefs_changed = true;
+            }
+        }
         let bridge_h = bridge.response.rect.height();
         if crate::prefs::UiPrefs::moved(self.session.prefs.ui.bridge_h, bridge_h) {
             self.session.prefs.ui.bridge_h = Some(bridge_h);
@@ -622,7 +652,15 @@ impl eframe::App for App {
             }
         }
         self.scenes.window(&ctx, st_for_windows, self.session.prefs.safe_mode, &mut actions);
-        crate::rta_view::rta_window(&ctx, &mut self.rta_ui, &self.rta_trace, st_for_windows, rta_fresh, &mut actions);
+        let win_out = crate::rta_view::rta_window(&ctx, &mut self.rta_ui, &self.rta_trace, st_for_windows, rta_fresh, &mut actions);
+        if dock_out.toggle_dock || win_out.toggle_dock {
+            self.rta_ui.docked = !self.rta_ui.docked;
+            self.session.prefs.ui.rta_docked = self.rta_ui.docked;
+            prefs_changed = true;
+        }
+        if dock_out.close {
+            self.rta_ui.open = false;
+        }
         crate::routing_view::routing_window(&ctx, &mut self.show_routing, st_for_windows, self.console.locked(), &mut actions);
         crate::fx_view::fx_window(&ctx, &mut self.show_fx, st_for_windows, self.console.locked(), &mut actions);
         {

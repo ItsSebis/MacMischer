@@ -32,6 +32,10 @@ pub struct Prefs {
 pub struct UiPrefs {
     /// Height of the meter bridge in points.
     pub bridge_h: Option<f32>,
+    /// RTA shown beside the meter bridge instead of in its own window.
+    pub rta_docked: bool,
+    /// Width of the docked RTA in points.
+    pub rta_dock_w: Option<f32>,
 }
 
 impl UiPrefs {
@@ -160,9 +164,10 @@ mod tests {
         let p = dir.path().join("prefs.toml");
         std::fs::write(&p, "safe_mode = true\n").unwrap();
         assert_eq!(Prefs::load_from(&p).ui.bridge_h, None);
-        let pr = Prefs { ui: UiPrefs { bridge_h: Some(140.0) }, ..Default::default() };
+        let pr = Prefs { ui: UiPrefs { bridge_h: Some(140.0), rta_docked: true, rta_dock_w: Some(500.0) }, ..Default::default() };
         pr.save_to(&p).unwrap();
-        assert_eq!(Prefs::load_from(&p).ui.bridge_h, Some(140.0));
+        let back = Prefs::load_from(&p).ui;
+        assert_eq!((back.bridge_h, back.rta_docked, back.rta_dock_w), (Some(140.0), true, Some(500.0)));
     }
 
     #[test]
