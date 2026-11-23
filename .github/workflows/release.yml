@@ -37,6 +37,12 @@ jobs:
           fi
           echo "VER=$VER" >> "$GITHUB_ENV"
 
+      - name: Linux build dependencies
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+
       - name: Test
         run: cargo test --workspace --release
 
@@ -60,8 +66,6 @@ jobs:
       - name: Build AppImage
         if: matrix.name == 'linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev
           cargo build --release -p macmischer
           curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
