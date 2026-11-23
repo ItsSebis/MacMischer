@@ -16,7 +16,7 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - os: macos-14 # Apple Silicon
+          - os: macos-latest # Apple Silicon (arm64)
             name: macos
           - os: windows-latest
             name: windows
