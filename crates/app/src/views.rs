@@ -249,7 +249,10 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
     let partner = c.st.linked_partner(s).filter(|p| *p > s);
     let sel = c.selected == s || Some(c.selected) == partner;
     let send = send.filter(|_| s.has_sends());
-    let width = if partner.is_some() { STRIP_W_STEREO } else { STRIP_W };
+    // Inherently stereo strips (aux in, FX returns, main) are drawn like a linked pair: two full meters.
+    let native_stereo = partner.is_none() && !matches!(s, StripId::Dca(_)) && c.meters.stereo(s).is_some();
+    let two_meters = partner.is_some() || native_stereo;
+    let width = if two_meters { STRIP_W_STEREO } else { STRIP_W };
     let (frame_rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let bg = if sel { theme::STRIP_SEL } else { theme::STRIP };
     ui.painter().rect_filled(frame_rect, 4.0, bg);
@@ -292,7 +295,7 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
     let bottom_h = 26.0 + 18.0 + 8.0;
     let fh = (ui.available_height() - bottom_h).max(80.0);
     ui.horizontal(|ui| {
-        let mw = if partner.is_some() { 21.0 } else { 10.0 };
+        let mw = if two_meters { 21.0 } else { 10.0 };
         let (mrect, mresp) = ui.allocate_exact_size(Vec2::new(mw, fh), Sense::click());
         let (lvl, peak) = c.meter(s);
         if let Some(p) = partner {
@@ -302,9 +305,9 @@ pub fn strip(ui: &mut Ui, c: &mut Ctx, s: StripId, height: f32, send: Option<Sen
             widgets::paint_meter(ui, half.translate(Vec2::new(11.0, 0.0)), rl, rp);
         } else if !matches!(s, StripId::Dca(_)) {
             if let Some((l, r)) = c.meters.stereo(s) {
-                let half = Rect::from_min_size(mrect.min, Vec2::new(4.5, fh));
+                let half = Rect::from_min_size(mrect.min, Vec2::new(10.0, fh));
                 widgets::paint_meter(ui, half, l, l);
-                widgets::paint_meter(ui, half.translate(Vec2::new(5.5, 0.0)), r, r);
+                widgets::paint_meter(ui, half.translate(Vec2::new(11.0, 0.0)), r, r);
             } else {
                 widgets::paint_meter(ui, mrect, lvl, peak);
             }

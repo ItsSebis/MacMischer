@@ -540,7 +540,7 @@ impl eframe::App for App {
             ui.add_space(6.0);
             views::detail(ui, &mut c);
         });
-        egui::Panel::right("main").exact_size(views::STRIP_W + 16.0).show(ui, |ui| {
+        egui::Panel::right("main").exact_size(views::STRIP_W_STEREO + 16.0).show(ui, |ui| {
             ui.add_space(6.0);
             views::master_section(ui, &mut c);
             let h = ui.available_height() - 6.0;
