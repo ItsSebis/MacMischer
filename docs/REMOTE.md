@@ -29,6 +29,10 @@ max_db = 4.0          # optional: level cap in dB (fader law), default +10
 meters = true         # show meters (default true)
 ```
 
+A linked pair is shown as one wide strip (id = the odd member, `"stereo": true`); fader and mute move both,
+and its meter shows the louder side. Double-tapping a fader resets it to 0 dB, or to `max_db` if that is lower;
+mute is left as it is.
+
 ## HTTP
 | Path | |
 |---|---|

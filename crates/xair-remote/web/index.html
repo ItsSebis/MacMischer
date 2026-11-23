@@ -48,6 +48,8 @@ main{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
 #strips.off .strip{opacity:.4;pointer-events:none}
 .strip{flex:1 0 92px;max-width:150px;min-width:92px;margin:0 auto;scroll-snap-align:start;display:flex;flex-direction:column;gap:8px;
   background:var(--panel);border-radius:14px;padding:8px;min-height:0}
+.strip.stereo{flex-grow:2;max-width:300px;min-width:140px}
+.stereo .fader{max-width:140px}
 .tag{padding:6px 4px;border-radius:8px;text-align:center;font-weight:600;font-size:14px;color:#0b0b0d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .db{text-align:center;font-variant-numeric:tabular-nums;font-size:17px;font-weight:600}
 .db small{color:var(--dim);font-weight:400;font-size:12px}
@@ -98,6 +100,7 @@ function lawDb(v) {
 }
 const fmtDb = s => (s === "-inf" || s === "-Infinity") ? "-∞" : (/^\d/.test(s) && parseFloat(s) > 0 ? "+" + s : s);
 
+const UNITY = 767 / 1023;                 // 0 dB on the fader law
 /* ---------- app state ---------- */
 let ws = null, backoff = 500, retryTimer = null, failures = 0;
 let mixerName = "", needPin = false, pin = store.get(sessionStorage, "pin") || "";
@@ -154,7 +157,7 @@ function buildStrips() {
   const wrap = el("div"); wrap.id = "strips";
   const showMeters = page.meters !== false;
   for (const s of page.strips) {
-    const root = el("div", "strip");
+    const root = el("div", "strip" + (s.stereo ? " stereo" : ""));
     const tag = el("div", "tag", s.name || s.id); tag.style.background = s.color || "#888";
     const db = el("div", "db"); 
     const row = el("div", "row");
@@ -214,6 +217,17 @@ function attachFader(id, u) {
     u.touchedAt = Date.now();
   };
   u.fader.addEventListener("pointerup", end); u.fader.addEventListener("pointercancel", end);
+  /* Double-tap resets to 0 dB (or the page cap if lower); mute is untouched. `dblclick` is unreliable on touch. */
+  let lastTap = 0, tapX = 0, tapY = 0, downX = 0, downY = 0;
+  u.fader.addEventListener("pointerdown", e => { downX = e.clientX; downY = e.clientY; });
+  u.fader.addEventListener("pointerup", e => {
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 8) { lastTap = 0; return; }   // a drag, not a tap
+    const now = performance.now();
+    if (now - lastTap < 350 && Math.hypot(e.clientX - tapX, e.clientY - tapY) < 30) {
+      lastTap = 0;
+      u.value = Math.min(page.max, UNITY); paintFader(u); u.lastSent = u.value; send({ t: "level", strip: id, value: u.value });
+    } else { lastTap = now; tapX = e.clientX; tapY = e.clientY; }
+  });
   u.fader.addEventListener("dblclick", e => e.preventDefault());
   u.fader.addEventListener("keydown", e => {            // keyboard: arrows nudge
     const d = e.key === "ArrowUp" || e.key === "ArrowRight" ? 0.01 : e.key === "ArrowDown" || e.key === "ArrowLeft" ? -0.01 : 0;

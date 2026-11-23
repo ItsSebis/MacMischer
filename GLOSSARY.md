@@ -30,6 +30,10 @@ _Avoid_: Simple mode
 One controllable slot on the mixer: an input channel, bus, FX return, DCA or the main output.
 _Avoid_: channel (only an input strip is a channel)
 
+**Linked pair**:
+Two adjacent Strips (1-2, 3-4, …) that the mixer treats as stereo, so fader, mute and send writes apply to both. Shown as one wide Strip under its odd (left) member.
+_Avoid_: stereo channel
+
 **Bank**:
 An operator-defined, named list of Strips shown together; a bus-bound bank makes the level controls act on sends to that bus.
 _Avoid_: page, layer

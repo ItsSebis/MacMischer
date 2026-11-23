@@ -180,15 +180,21 @@ impl Session {
     fn page_strip(&self, id: &str) -> Option<(StripId, PageConfig)> {
         let (_, page) = self.page.as_ref()?;
         let s = StripId::from_short(id)?;
-        page.strips.contains(&s).then(|| (s, page.clone()))
+        // A linked pair is shown as one strip under its leader, so either half is accepted.
+        let partner = self.mixer().and_then(|m| m.state().linked_partner(s));
+        let on_page = page.strips.contains(&s) || partner.is_some_and(|p| page.strips.contains(&p));
+        on_page.then(|| (s, page.clone()))
     }
 
     fn page_msg(&self) -> Json {
         let Some((i, page)) = &self.page else { return json!({}) };
         let m = self.mixer();
         let st = m.as_ref().map(|m| m.state());
-        let strips: Vec<Json> = page
-            .strips
+        let shown = match &st {
+            Some(st) => st.display_strips(&page.strips),
+            None => page.strips.clone(),
+        };
+        let strips: Vec<Json> = shown
             .iter()
             .map(|s| {
                 let (name, color, stereo) = match &st {
@@ -212,7 +218,7 @@ impl Session {
         let mut strips = BTreeMap::new();
         if let Some(m) = &m {
             let st = m.state();
-            for s in &page.strips {
+            for s in &st.display_strips(&page.strips) {
                 let v = st.get(level_param(*s, page)).and_then(Value::as_f32).unwrap_or(0.0);
                 let db = fader::to_db(v);
                 let db = if db < -89.5 { "-inf".to_string() } else { format!("{db:.1}") };
@@ -250,10 +256,19 @@ impl Session {
             if let (Some((_, page)), Some(m)) = (&self.page, self.mixer()) {
                 if page.meters {
                     let mt = m.meters();
-                    let vals: BTreeMap<String, f32> = page
-                        .strips
+                    let st = m.state();
+                    let vals: BTreeMap<String, f32> = st
+                        .display_strips(&page.strips)
                         .iter()
-                        .filter_map(|s| mt.strip(*s).map(|db| (s.short(), (db * 10.0).round() / 10.0)))
+                        .filter_map(|s| {
+                            // A pair shows the louder of its two meters.
+                            let db = [Some(*s), st.linked_partner(*s)]
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|x| mt.strip(x))
+                                .reduce(f32::max)?;
+                            Some((s.short(), (db * 10.0).round() / 10.0))
+                        })
                         .collect();
                     out.push(json!({"t":"meters","m":vals}));
                 }
@@ -392,5 +407,48 @@ mod tests {
         r.s.handle(level("1", f32::NAN), &mut out);
         assert_eq!(r.mixer.state().fader(StripId::Ch(1)), at);
         assert!(errors(&out).is_empty());
+    }
+
+    fn linked_page() -> Vec<PageConfig> {
+        vec![PageConfig::new("p", vec![StripId::Ch(3), StripId::Ch(4), StripId::Ch(1)], None)]
+    }
+
+    fn wait_linked(r: &Rig) {
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while r.mixer.state().linked_partner(StripId::Ch(3)).is_none() {
+            assert!(std::time::Instant::now() < end, "link state did not arrive");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn linked_pair_is_one_strip_and_moves_together() {
+        let mut r = rig("", linked_page());
+        wait_linked(&r);
+        let msg = {
+            r.s.page = Some((0, linked_page().remove(0)));
+            r.s.page_msg()
+        };
+        let ids: Vec<&str> = msg["strips"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["3", "1"]);
+        assert_eq!(msg["strips"][0]["stereo"], true);
+        let mut out = Vec::new();
+        r.s.handle(level("3", 0.6), &mut out);
+        r.s.handle(In::Mute { strip: "3".into(), muted: true }, &mut out);
+        assert!(errors(&out).is_empty());
+        let st = r.mixer.state();
+        assert_eq!(st.fader(StripId::Ch(3)), st.fader(StripId::Ch(4)));
+        assert!(!st.on(StripId::Ch(3)) && !st.on(StripId::Ch(4)));
+    }
+
+    #[test]
+    fn page_listing_only_the_second_half_still_works() {
+        let pages = vec![PageConfig::new("p", vec![StripId::Ch(4)], None)];
+        let mut r = rig("", pages);
+        wait_linked(&r);
+        open(&mut r);
+        let mut out = Vec::new();
+        r.s.handle(level("3", 0.5), &mut out); // leader id is what the client is told
+        assert!(errors(&out).is_empty(), "{:?}", errors(&out));
     }
 }
