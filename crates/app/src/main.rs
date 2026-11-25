@@ -33,6 +33,7 @@ mod settings_view;
 mod show;
 mod theme;
 mod updater;
+mod tray;
 mod updater_pkg;
 mod views;
 mod widgets;

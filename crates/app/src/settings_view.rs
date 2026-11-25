@@ -122,7 +122,7 @@ fn appearance(ui: &mut egui::Ui, prefs: &mut Prefs, error: Option<&str>) -> bool
 }
 
 fn safety(ui: &mut egui::Ui, prefs: &mut Prefs) -> bool {
-    let before = (prefs.safe_mode, prefs.disable_scroll);
+    let before = (prefs.safe_mode, prefs.disable_scroll, prefs.quit_on_close);
     ui.label(egui::RichText::new("Mode").strong());
     ui.radio_value(&mut prefs.safe_mode, true, "Safe: scene recall and preset loads need a confirming second click");
     ui.radio_value(&mut prefs.safe_mode, false, "Simple: no confirmations");
@@ -134,5 +134,16 @@ fn safety(ui: &mut egui::Ui, prefs: &mut Prefs) -> bool {
             .size(11.0)
             .color(theme::DIM),
     );
-    before != (prefs.safe_mode, prefs.disable_scroll)
+    ui.add_space(10.0);
+    ui.label(egui::RichText::new("Closing the window").strong());
+    let mut keep = !prefs.quit_on_close;
+    if ui.checkbox(&mut keep, "Keep running in the menu bar / tray while the web remote is on").changed() {
+        prefs.quit_on_close = !keep;
+    }
+    ui.label(
+        egui::RichText::new("The remote keeps serving until you choose Quit from the tray icon. With the remote off, closing the window quits.")
+            .size(11.0)
+            .color(theme::DIM),
+    );
+    before != (prefs.safe_mode, prefs.disable_scroll, prefs.quit_on_close)
 }

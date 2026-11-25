@@ -19,6 +19,9 @@ pub struct Prefs {
     pub ui: UiPrefs,
     /// Ignore the scroll wheel / trackpad scroll on faders, bars and EQ bands (no accidental moves).
     pub disable_scroll: bool,
+    /// Closing the window quits even while the web remote is on (default: keep running in the
+    /// menu bar / tray so the remote keeps serving).
+    pub quit_on_close: bool,
     /// MIDI input: enabled, device and bindings (not part of the show file).
     #[serde(deserialize_with = "crate::midi::lenient_prefs")]
     pub midi: crate::midi::MidiPrefs,

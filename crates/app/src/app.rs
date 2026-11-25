@@ -28,6 +28,11 @@ enum Conn {
 
 pub struct App {
     ctx: egui::Context,
+    tray: crate::tray::Tray,
+    /// The window is hidden; the app lives on in the tray.
+    hidden: bool,
+    /// A deliberate quit is under way (tray Quit, updater handover): close requests must not hide.
+    quitting: bool,
     conn: Conn,
     _mock: Option<xair_mock::MockMixer>,
     session: Session,
@@ -64,6 +69,9 @@ impl App {
         let session = Session::load();
         let remembered = session.prefs.last_mixer.as_deref().and_then(parse_addr);
         let mut app = App {
+            tray: crate::tray::Tray::new(&ctx),
+            hidden: false,
+            quitting: false,
             ctx: ctx.clone(),
             conn: Conn::Finding(Finder::new(remembered, true)),
             _mock: None,
@@ -397,6 +405,7 @@ impl App {
         let Some(BannerView { version, notes, text, error }) = state.banner() else { return };
         if state.should_quit() {
             // The new bundle is in place and started: hand over to it.
+            self.quitting = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         egui::Panel::top("update_banner").show(ui, |ui| {
@@ -435,7 +444,72 @@ impl App {
     }
 }
 
+impl App {
+    /// Hide-to-tray: intercept the window close, keep the process (and web remote) alive, and
+    /// handle the tray menu. Everything else (Cmd+Q, tray Quit, updater handover) really quits.
+    fn background_mode(&mut self, ctx: &egui::Context) {
+        use egui::ViewportCommand as Cmd;
+        let remote_on = self.session.remote.enabled;
+        if ctx.input(|i| i.viewport().close_requested()) {
+            // Cmd+Q arrives as a close request too; it carries the command+Q chord.
+            let cmd_q = ctx.input(|i| i.modifiers.command && i.key_down(egui::Key::Q));
+            let hide = self.tray.supported()
+                && !cmd_q
+                && crate::tray::hide_on_close(remote_on, self.session.prefs.quit_on_close, self.quitting);
+            if hide {
+                ctx.send_viewport_cmd(Cmd::CancelClose);
+                self.set_hidden(ctx, true);
+            }
+        }
+    }
+
+    /// Tray menu and status. Runs from `App::logic`, which eframe still calls while the window is
+    /// hidden (it skips `App::ui` then, so this is the only place that can react to the tray).
+    fn tray_tick(&mut self, ctx: &egui::Context) {
+        use egui::ViewportCommand as Cmd;
+        self.tray.set_status(&crate::tray::status_text(&self.remote.status(), self.remote.clients()));
+        let ev = self.tray.poll();
+        if ev.quit {
+            self.quitting = true;
+            ctx.send_viewport_cmd(Cmd::Close);
+            return;
+        }
+        if ev.show_window || (ev.toggle_window && self.hidden) {
+            self.set_hidden(ctx, false);
+        } else if ev.toggle_window {
+            self.set_hidden(ctx, true);
+        }
+        if self.hidden {
+            // Remote switched off while hidden: nothing useful left to run, so quit.
+            if !self.session.remote.enabled {
+                self.quitting = true;
+                ctx.send_viewport_cmd(Cmd::Close);
+                return;
+            }
+            // Keep `App::ui` (MIDI, remote sync, mixer state) running at eframe's ~10 Hz hidden rate.
+            ctx.send_viewport_cmd(Cmd::RequestPaintWhileHidden);
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+    }
+
+    fn set_hidden(&mut self, ctx: &egui::Context, hidden: bool) {
+        use egui::ViewportCommand as Cmd;
+        self.hidden = hidden;
+        crate::tray::set_dock_icon(!hidden);
+        self.tray.set_window_visible(!hidden);
+        ctx.send_viewport_cmd(Cmd::Visible(!hidden));
+        if !hidden {
+            ctx.send_viewport_cmd(Cmd::Minimized(false));
+            ctx.send_viewport_cmd(Cmd::Focus);
+        }
+    }
+}
+
 impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.tray_tick(ctx);
+    }
+
     fn on_exit(&mut self) {
         self.session.save_now();
     }
@@ -754,6 +828,7 @@ impl eframe::App for App {
         }
         self.session.autosave(&ctx);
         self.background.outline_text(&ctx);
+        self.background_mode(&ctx);
         // Keep meters animating smoothly between network packets.
         ctx.request_repaint_after(Duration::from_millis(33));
     }
