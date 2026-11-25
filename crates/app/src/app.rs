@@ -408,39 +408,53 @@ impl App {
             self.quitting = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        egui::Panel::top("update_banner").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!("MacMischer {version} {text}")).strong().color(theme::ACCENT));
-                let (label, update) = match &state {
-                    State::Available { .. } => ("Open release page", false),
-                    State::Updatable(_) => ("Update now", true),
-                    State::Failed { .. } => ("Try again", true),
-                    _ => ("", false),
-                };
-                if !label.is_empty() && ui.button(label).clicked() {
-                    if update {
-                        self.updater.update_now();
-                    } else {
-                        self.updater.open_release_page();
+        let mut later = false;
+        let mut open = true;
+        egui::Window::new(format!("MacMischer {version} {text}"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ui.ctx(), |ui| {
+                ui.set_width(520.0);
+                if let Some(e) = error {
+                    ui.label(egui::RichText::new(e).color(theme::DIM));
+                    ui.add_space(6.0);
+                }
+                if !notes.trim().is_empty() {
+                    ui.label(egui::RichText::new("What's new").strong());
+                    egui::ScrollArea::vertical().max_height(280.0).id_salt("update_notes").show(ui, |ui| {
+                        ui.label(notes.trim().replace("**", ""));
+                    });
+                    ui.add_space(8.0);
+                }
+                ui.horizontal(|ui| {
+                    let (label, update) = match &state {
+                        State::Available { .. } => ("Open release page", false),
+                        State::Updatable(_) => ("Update now", true),
+                        State::Failed { .. } => ("Try again", true),
+                        _ => ("", false),
+                    };
+                    if !label.is_empty() && ui.button(label).clicked() {
+                        if update {
+                            self.updater.update_now();
+                        } else {
+                            self.updater.open_release_page();
+                        }
                     }
-                }
-                if state.is_dismissible() && ui.button("Later").clicked() {
-                    self.updater.later();
-                }
-                if state.is_skippable() && ui.button("Skip this version").clicked() {
-                    self.updater.skip_this_version();
-                    Self::sync_update_prefs(&mut self.session.prefs, &self.updater);
-                }
-            });
-            if let Some(e) = error {
-                ui.label(egui::RichText::new(e).color(theme::DIM));
-            }
-            if !notes.trim().is_empty() {
-                egui::ScrollArea::vertical().max_height(80.0).id_salt("update_notes").show(ui, |ui| {
-                    ui.label(egui::RichText::new(notes.trim()).color(theme::DIM));
+                    if state.is_dismissible() && ui.button("Later").clicked() {
+                        later = true;
+                    }
+                    if state.is_skippable() && ui.button("Skip this version").clicked() {
+                        self.updater.skip_this_version();
+                        Self::sync_update_prefs(&mut self.session.prefs, &self.updater);
+                    }
                 });
-            }
-        });
+            });
+        // The window's close button means "Later" (only while an offer or failure is showing).
+        if (later || !open) && state.is_dismissible() {
+            self.updater.later();
+        }
     }
 }
 
