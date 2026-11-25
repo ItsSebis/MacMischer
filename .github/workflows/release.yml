@@ -81,6 +81,9 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history and tags: the notes are the commits since the previous tag
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -92,8 +95,9 @@ jobs:
         run: |
           ls -l dist
           test "$(ls dist | wc -l)" -eq 3
+          tools/release/notes.sh "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" | tee notes.md
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" --generate-notes
+            --title "$GITHUB_REF_NAME" --notes-file notes.md
       - name: Check GitHub published a digest for every asset
         env:
           GH_TOKEN: ${{ github.token }}

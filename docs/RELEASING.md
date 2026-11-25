@@ -26,8 +26,8 @@ A Release that breaks rule 1, 2 or 3 for a platform is **announce-only** there: 
    ```sh
    git tag "v0.1.4" && git push origin "v0.1.4"
    ```
-3. The workflow runs the tests, builds the three assets in parallel, and only when all three exist creates the GitHub Release (with generated notes) and checks that GitHub published a digest for each asset. If it fails before publishing, nothing is released; fix and re-tag (delete the tag first).
-4. Edit the Release notes on GitHub if you want them nicer: the banner shows them.
+3. The workflow runs the tests, builds the three assets in parallel, and only when all three exist creates the GitHub Release (notes from `tools/release/notes.sh`: the commit subjects since the previous tag, grouped into "What's new" and "Fixes") and checks that GitHub published a digest for each asset. If it fails before publishing, nothing is released; fix and re-tag (delete the tag first).
+4. Write commit subjects as user-facing sentences ("Fix …" lands under Fixes; version bumps, merges, docs/test/ci/chore commits are left out). Edit the Release notes on GitHub if you want them nicer: the update window shows them.
 
 ## Building an asset by hand
 
