@@ -424,7 +424,7 @@ impl App {
                 if !notes.trim().is_empty() {
                     ui.label(egui::RichText::new("What's new").strong());
                     egui::ScrollArea::vertical().max_height(280.0).id_salt("update_notes").show(ui, |ui| {
-                        ui.label(notes.trim().replace("**", ""));
+                        crate::markdown::show(ui, notes.trim());
                     });
                     ui.add_space(8.0);
                 }

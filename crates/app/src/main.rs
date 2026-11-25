@@ -20,6 +20,7 @@ mod fx_view;
 mod history;
 mod input;
 mod keymap;
+mod markdown;
 mod midi;
 mod midi_view;
 mod prefs;
